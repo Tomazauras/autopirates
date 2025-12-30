@@ -1,0 +1,18 @@
+# Assets to block using an addblocker for less clutter
+
+kixeye.com/assets/spritesheets.v2/worldmap/salvageSpriteSheet.v2*^
+kixeye.com/assets/spritesheets.v2/worldmap/flagsSpriteSheet*^
+kixeye.com/assets/spritesheets.v2/worldmap/eliteFleetSpriteSheet*^
+kixeye.com/assets/spritesheets.v2/worldmap/gantrySpriteSheet*^
+kixeye.com/assets/spritesheets.v2/worldmap/conquest_draconian*^
+kixeye.com/assets/spritesheets.v2/worldmap/conquest_forsaken*^
+kixeye.com/assets/spritesheets.v2/worldmap/worldmap_fm_hierophant_2025*^
+kixeye.com/assets/spritesheets.v2/worldmap/corrupted_waters_fm*^
+kixeye.com/assets/spritesheets.v2/worldmap/uranium_resource_depot*^
+kixeye.com/assets/spritesheets.v2/worldmap/titanium_resource_depot*^
+kixeye.com/assets/spritesheets.v2/worldmap/base_parts_depot*^
+kixeye.com/assets/popups/baseparts/baseparts_wmo_icon*^
+kixeye.com/assets/spritesheets.v2/worldmap/draconian_uranium_base_sprite_sheet*^
+kixeye.com/assets/ships.v2/600000-top-03eef7fed1db821c7c3782182434cd84*^
+kixeye.com/assets/ships.v2/412001-top-0e33873dad8e449d6611f3fc1d8f718f*^
+kixeye.com/assets/ships.v2/411001-top-b2535c2e131e59a01ee8fb38966bb9da*^

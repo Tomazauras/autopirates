@@ -16,10 +16,13 @@ configs_main = {
 }
 
 links = {
-    "create": "https://prod-kx-vip.bp.kixeye.com/api/bm/roguecrew/create",
-    "reroll": "https://prod-kx-vip.bp.kixeye.com/api/bm/roguecrew/reroll",
-    "accept": "https://prod-kx-vip.bp.kixeye.com/api/bm/roguecrew/accept",
-    "delete": "https://prod-kx-vip.bp.kixeye.com/api/bm/roguecrew/delete",
+    "create": "api/bm/roguecrew/create",
+    "reroll": "api/bm/roguecrew/reroll",
+    "accept": "api/bm/roguecrew/accept",
+    "delete": "api/bm/roguecrew/delete",
+    "assign": "api/bm/roguecrew/assign",
+    "read": "api/bm/roguecrew/read",
+    "currency": "player/getCurrencyBalance",
     "base_url": "https://prod-kx-vip.bp.kixeye.com",
     "world_map_url": "https://prod-web-vip.bp.kixeye.com",
 }

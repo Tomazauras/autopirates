@@ -5,11 +5,9 @@ import websocket
 import random
 import math
 import time
-import json
 import os
 import threading
 from collections import defaultdict
-from winotify import Notification
 
 import config
 
@@ -30,14 +28,14 @@ def get_salt(seed):
     return "".join(d)
 
 
-def get_num(n):
+def get_num(n: int):
     return (n % 11) * n
 
 
-def get_hash(seed, params_string, random_seed, secure):
-    num = get_num(random_seed)
+def get_hash(seed, params_string: str, random_seed: int, secure: bool):
+    num = get_num(n=random_seed)
     if secure:
-        salt = get_salt(seed)
+        salt = get_salt(seed=seed)
         raw = salt + params_string + str(num)
     else:
         raw = params_string + str(num)
@@ -52,17 +50,23 @@ def _get_headers():
         "Connection": "keep-alive",
         "Origin": BASE_URL,
         "Referer": f"{BASE_URL}/canvas",
-        "Cookie": f'PHPSESSID={config.configs["phpsessid"]}',
+        "Cookie": f'PHPSESSID={config.configs_main["phpsessid"]}',
     }
 
 
 class CrewManager:
     def __init__(self, session):
+        """
+        CrewManager constructor
+
+        Args:
+            session (session): The session object. Used for interacting with the game server.
+        """
         self.session = session
-        self.userid = config.configs["userid"]
+        self.userid = config.configs_main["userid"]
         self.seed = config.seeds["base"]
-        self.game_signed_request = config.configs["game_signed_request"]
-        self.signed_request = config.configs["signed_request"]
+        self.game_signed_request = config.configs_main["game_signed_request"]
+        self.signed_request = config.configs_main["signed_request"]
 
         self.whitelist = config.whitelist_crews
         self.blacklist = config.blacklist_crews
@@ -86,12 +90,24 @@ class CrewManager:
         self.roll_history_counts = defaultdict(list)
         self.last_gold_roll = defaultdict(int)
 
-    def _calc_h_hn(self, params, seed):
+    def _calc_h_hn(self, params_string, seed):
         hn = random.randint(0, 9999999)
-        h = get_hash(seed, params, hn, secure=True)
+        h = get_hash(
+            seed=seed, params_string=params_string, random_seed=hn, secure=True
+        )
         return hn, h
 
-    def _generate_hash_string(self, params, action):
+    def _generate_hash_string(self, params: dict, action: int):
+        """
+        Generates hash string from params.
+
+        Args:
+            params (dict): Dictionary of parameters.
+            action (int): Number associated with an action.
+
+        Returns:
+            string (str): parameter aggregate.
+        """
         string = ""
         if action == 0:
             string += str(params["packId"])
@@ -102,8 +118,6 @@ class CrewManager:
         elif action == 4:
             string += str(params["currencyid"])
             string += str(params["userid"])
-        elif action == 5:
-            pass
         elif action == 6:
             string += str(params["fleet_id"])
             string += str(params["id"])
@@ -111,31 +125,35 @@ class CrewManager:
 
     def _make_request(
         self,
-        endpoint,
-        params=None,
-        payload=None,
-        post=False,
-        action=0,
+        endpoint: str,
+        params: dict,
+        payload: dict,
+        post: bool,
+        action: int,
     ):
         """
-        0 - create\n\t
-        1 - reroll\n\t
-        2 - accept\n\t
-        3 - delete\n\t
-        4 - uranium balance\n\t
-        5 - crews storage\n\t
-        6 - assign\n\t
+        Forms a request that is then sent to the game server.
+
+        Args:
+            endpoint (str): Request endpoint.
+            params (dict): Request query string parameters.
+            payload (dict): Request form data.
+            post (bool): Is request a Post or a Get.
+            action (int): Number associated with an action.
+                            0 - create
+                            1 - reroll
+                            2 - accept
+                            3 - delete
+                            4 - uranium balance
+                            5 - crews storage
+                            6 - assign
+
+        Returns:
+            resp (dict): Response data in json format.
         """
-        if params is None:
-            params = {}
-
-        if payload is None:
-            payload = {}
-
         ts = int(time.time())
-        seed = self.seed
-        param_string = self._generate_hash_string(payload, action)
-        hn, h = self._calc_h_hn(param_string, seed)
+        param_string = self._generate_hash_string(params=payload, action=action)
+        hn, h = self._calc_h_hn(params_string=param_string, seed=self.seed)
         params.update(
             {
                 "ts": ts,
@@ -158,69 +176,170 @@ class CrewManager:
         return resp.json()
 
     def _set_uranium(self):
-        endpoint = "player/getCurrencyBalance"
+        """
+        Fetch uranium balance from game server.
+
+        Returns:
+            resp (dict): Response data in json format.
+        """
+        endpoint = config.links["currency"]
         payload = {"userid": self.userid, "currencyid": 1}
-        resp = self._make_request(endpoint, payload=payload, action=4, post=True)
+        resp = self._make_request(
+            endpoint=endpoint, params={}, payload=payload, post=True, action=4
+        )
         self.uranium_storage = resp["balances"]["1"]["amount"]
         return resp
 
     def _set_crews(self):
-        endpoint = "/api/bm/roguecrew/read"
-        resp = self._make_request(endpoint, post=True, action=5)
+        """
+        Fetch crew data from game server.
+
+        Returns:
+            resp (dict): Response data in json format.
+        """
+        endpoint = config.links["read"]
+        resp = self._make_request(
+            endpoint=endpoint, params={}, payload={}, post=True, action=5
+        )
         self.remaining_slots = resp["remainingSlots"]
         self.crew_storage = resp["items"]
         return resp
 
     def _create_crew(self):
-        endpoint = "api/bm/roguecrew/create"
+        """
+        Send a request to game server, to create a crew transaction.
+
+        Returns:
+            resp (dict): Response data in json format.
+        """
+        endpoint = config.links["create"]
         payload = {"packId": "9"}
         self.uranium_storage -= 1000
-        return self._make_request(endpoint, payload=payload, post=True, action=0)
+        return self._make_request(
+            endpoint=endpoint, params={}, payload=payload, post=True, action=0
+        )
 
-    def _reroll_crew(self, transaction_id):
-        endpoint = "api/bm/roguecrew/reroll"
+    def _reroll_crew(self, transaction_id: int):
+        """
+        Send a request to game server, to create a crew transaction.
+
+        Args:
+            transaction_id (int): id of the transaction.
+
+        Returns:
+            resp (dict): Response data in json format.
+        """
+        endpoint = config.links["reroll"]
         payload = {"transactionId": transaction_id}
         self.uranium_storage -= 800
-        return self._make_request(endpoint, payload=payload, post=True, action=1)
+        return self._make_request(
+            endpoint=endpoint, params={}, payload=payload, post=True, action=1
+        )
 
-    def _accept_crew(self, transaction_id):
-        endpoint = "api/bm/roguecrew/accept"
+    def _accept_crew(self, transaction_id: int):
+        """
+        Send a request to game server, to accept the crew transaction.
+
+        Args:
+            transaction_id (int): id of the transaction.
+
+        Returns:
+            resp (dict): Response data in json format.
+        """
+        endpoint = config.links["accept"]
         payload = {"transactionId": transaction_id}
-        return self._make_request(endpoint, payload=payload, post=True, action=2)
+        return self._make_request(
+            endpoint=endpoint, params={}, payload=payload, post=True, action=2
+        )
 
-    def _delete_crew(self, long_crew_id):
-        endpoint = "api/bm/roguecrew/delete"
+    def _delete_crew(self, long_crew_id: int):
+        """
+        Send a request to game server, to delete a crew.
+
+        Args:
+            long_crew_id (int): long id of the crew.
+
+        Returns:
+            resp (dict): Response data in json format.
+        """
+        endpoint = config.links["delete"]
         payload = {"id": long_crew_id}
-        return self._make_request(endpoint, payload=payload, post=True, action=3)
+        return self._make_request(
+            endpoint=endpoint, params={}, payload=payload, post=True, action=3
+        )
 
-    def _assign_crew(self, long_crew_id, fleet_id):
-        endpoint = "api/bm/roguecrew/assign"
+    def _assign_crew(self, long_crew_id: int, fleet_id: str):
+        """
+        Send a request to game server, to assign a crew to a fleet.
+
+        Args:
+            long_crew_id (int): long id of the crew.
+            fleet_id (str): fleet id. ("1"...."15")
+
+        Returns:
+            resp (dict): Response data in json format.
+        """
+        endpoint = config.links["assign"]
         payload = {"id": long_crew_id, "fleet_id": fleet_id}
-        return self._make_request(endpoint, payload=payload, post=True, action=6)
+        return self._make_request(
+            endpoint=endpoint, params={}, payload=payload, post=True, action=6
+        )
 
-    def _claim_crew(self, long_crew_id):
+    def _claim_crew(self, long_crew_id: int):
+        """
+        ***Thread-locked***. Mark a crew as claimed / in-use.
+
+        Args:
+            long_crew_id (int): long id of the crew.
+
+        Returns:
+            _ (bool): False if crew is not in-use. Otherwise marks the crew as claimed and returns True.
+        """
         with self.claim_lock:
             if long_crew_id in self.claimed_crews:
                 return False
             self.claimed_crews.add(long_crew_id)
             return True
 
-    def _release_crew(self, crew):
+    def _release_crew(self, crew: dict):
+        """
+        ***Thread-locked***. Releases a crew by calling self._delete_crew, updates crew storage.
+
+        Args:
+            crew (dict): crew to be released.
+        """
         with self.claim_lock:
             self.claimed_crews.discard(crew["id"])
             self.crew_storage.remove(crew)
             self._delete_crew(crew["id"])
 
-    def _pick_crew(self, crew_id):
+    def _pick_crew(self, crew_id: int):
+        """
+        Picks a crew from crew storage, that is not in-use and is of type crew_id.
+
+        Args:
+            crew_id (int): short crew id (crew type).
+
+        Returns:
+            crew (dict): Crew object.
+        """
         for crew in self.crew_storage:
             if int(crew["crew_id"]) == crew_id and crew["fleet_id"] == "0":
                 if self._claim_crew(long_crew_id=crew["id"]):
                     return crew
-        return None
+        return False
 
-    def _roll_crew(self, thread):
+    def _roll_crew(self, thread: int):
+        """
+        Initiates a crew transaction and renews it until a crew with an allowed crew type is met.
+
+        Args:
+            thread (int): Thread number.
+
+        Returns:
+            Tuple (int, int): Crew type, Long crew id
+        """
         if self.uranium_storage < self.uranium_limit or self.remaining_slots < 2:
-            # print("Uranium ended or crews full. Cant buy")
             self.can_roll[thread] = False
             return None, None
 
@@ -232,7 +351,6 @@ class CrewManager:
             self.roll_history[thread][crew_id] += 1
 
             if self.uranium_storage < self.uranium_limit:
-                # print("Uranium ended. Cant reroll")
                 self.can_roll[thread] = False
                 self.delete_last_roll[thread] = True
                 break
@@ -245,81 +363,24 @@ class CrewManager:
         return resp["item"]["crew_id"], resp["item"]["id"]
 
     def _print_status(self):
+        """
+        Print information about the current crew roll session.
+        """
         print(f"====== Crew Status ======")
         print(f"Rolls : {self.status[0]}")
         for key, value in self.status.items():
             if key in self.whitelist:
                 print(f"{self.crew_names[key]} : {value}")
 
-    def _log_history(self):
-        time_format = ""
-        time_format += str(time.localtime().tm_yday)
-        time_format += "_"
-        time_format += str(time.localtime().tm_hour)
-        time_format += "_"
-        time_format += str(time.localtime().tm_min)
-        time_format += "_"
-        time_format += str(time.localtime().tm_sec)
-
-        output = {"Total_rolls": 0}
-        output["Roll_history"] = defaultdict(int)
-        B = defaultdict(int)
-        A = defaultdict(int)
-        E = defaultdict(int)
-        C = defaultdict(int)
-
-        for t in self.roll_history.keys():
-            output["Total_rolls"] += sum(self.roll_history[t].values())
-
-            for key, value in self.roll_history[t].items():
-                output["Roll_history"][key] += value
-                crew_name = self.crew_names[key].split(maxsplit=1)
-                if crew_name[0] == "(B)":
-                    B[crew_name[1]] += value
-                elif crew_name[0] == "(A)":
-                    A[crew_name[1]] += value
-                elif crew_name[0] == "(E)":
-                    E[crew_name[1]] += value
-                elif crew_name[0] == "(C)":
-                    C[crew_name[1]] += value
-
-        output["Basic_rolls"] = sum(B.values())
-        output["Basic_crews"] = B
-
-        output["Advanced_rolls"] = sum(A.values())
-        output["Advanced_crews"] = A
-
-        output["Elite_rolls"] = sum(E.values())
-        output["Elite_crews"] = E
-
-        output["Core_rolls"] = sum(C.values())
-        output["Core_crews"] = C
-
-        if len(self.roll_history_counts[13001]) > 0:
-            output["Average_Grease"] = sum(self.roll_history_counts[13001]) / len(
-                self.roll_history_counts[13001]
-            )
-            output["Grease_roll_counts"] = self.roll_history_counts[13001]
-        if len(self.roll_history_counts[13002]) > 0:
-            output["Average_Demo"] = sum(self.roll_history_counts[13002]) / len(
-                self.roll_history_counts[13002]
-            )
-            output["Demo_roll_counts"] = self.roll_history_counts[13002]
-
-        with open(
-            f"{LOG_FOLDER}\\log_{time_format}.json",
-            "w",
-        ) as f:
-            json.dump(output, f)
-
-    def _set_defaults(self, thread_count):
+    def _set_defaults(self, thread_count: int):
         """
-        Sets the uranium limit for rolling crews with headway to spare for multithreaded operations
+        Adjusts self.uranium_limit and self.remaining_slots in response to thread_count.
 
-        :param self: Description
-        :param thread_count: Description
+        Args:
+            thread_count (int): The numbers of threads to use when rolling crews and setting limits.
         """
-        self.uranium_limit = thread_count * 1000 * 2
+        self.uranium_limit *= thread_count * 2
+        self.remaining_slots -= thread_count
         for thread in range(0, thread_count):
             self.can_roll[thread] = (
                 self.uranium_storage > self.uranium_limit and self.remaining_slots > 2
@@ -327,14 +388,19 @@ class CrewManager:
             self.roll_history[thread] = defaultdict(int)
             self.last_gold_roll[thread] = defaultdict(int)
 
-    def fill_crews(self, timeout, thread=0):
+    def fill_crews(self, timeout: float, thread: int = 0):
+        """
+        Starts and manages the crew rolling workflow until timeout is reached or crew storage is filled.
+
+        Args:
+            timeout (float): Time offset to the future.
+            thread (int): Thread number.
+        """
         while time.time() < timeout and self.remaining_slots > 2:
             if not self.can_roll[thread]:
                 if self.uranium_storage > self.uranium_limit:
                     self.can_roll[thread] = True
-                    # print(f"Resuming crews T-{thread}")
                 else:
-                    # print(f"Pausing crews T-{thread}")
                     time.sleep(5)
                     self._set_uranium()
                     continue
@@ -350,19 +416,18 @@ class CrewManager:
                 self.roll_history[thread] = defaultdict(int)
                 self.remaining_slots -= 1
                 self._print_status()
-                # self.roll_history_counts[crew_id].append(
-                #     sum(self.roll_history[thread].values())
-                #     - self.last_gold_roll[thread][crew_id]
-                # )
-                # self.last_gold_roll[thread][crew_id] = sum(
-                #     self.roll_history[thread].values()
-                # )
 
             self._set_uranium()
-        # print(f"T-{thread} finished rolling")
 
-    def flush_crews(self, blacklist=True):
-        self._set_crews()
+    def flush_crews(self, blacklist: set):
+        """
+        Delete all crews from storage.
+
+        Args:
+            blacklist (set): Use a blacklist instead, containing crew ids / types to delete from storage.
+        """
+        if not self.crew_storage:
+            self._set_crews()
         for crew in self.crew_storage:
             if blacklist:
                 if int(crew["crew_id"]) in self.blacklist:
@@ -376,16 +441,16 @@ class CrewManager:
 class FleetManager:
     def __init__(self, session):
         self.session = session
-        self.userid = config.configs["userid"]
+        self.userid = config.configs_main["userid"]
         self.seed = config.seeds["base"]
         self.world_map_seed = config.seeds["world"]
-        self.game_signed_request = config.configs["game_signed_request"]
-        self.map_signed_request = config.configs["map_signed_request"]
-        self.signed_request = config.configs["signed_request"]
-        self.world_index = config.configs["world_index"]
-        self.baseid = config.configs["baseid"]
-        self.base_x = config.configs["base_x"]
-        self.base_y = config.configs["base_y"]
+        self.game_signed_request = config.configs_main["game_signed_request"]
+        self.map_signed_request = config.configs_main["map_signed_request"]
+        self.signed_request = config.configs_main["signed_request"]
+        self.world_index = config.configs_main["world_index"]
+        self.baseid = config.configs_main["baseid"]
+        self.base_x = config.configs_main["base_x"]
+        self.base_y = config.configs_main["base_y"]
 
         self.map_ids = {}
         self.ship_ids = defaultdict(str)
@@ -1022,7 +1087,7 @@ class FleetManager:
 
         if ship_count > 1 or fleet_id != gs_fleet_id:
             self._manage_fleet(fleet_id=fleet_id)
-            time.sleep(2)
+            time.sleep(0.5)
 
         fleet_layout = ""
         for i in range(1, ship_count + 1):
@@ -1033,7 +1098,7 @@ class FleetManager:
                     gs_fleet_id=gs_fleet_id,
                     fleet_layout=fleet_layout,
                 )
-                time.sleep(2)
+                time.sleep(0.5)
             resp = self.repair_fleet(fleet_id=gs_fleet_id)
             repair_time = resp["complete_time"] - resp["currenttime"]
             if repair_time > 300:
@@ -1041,15 +1106,15 @@ class FleetManager:
                     f"[== Repair ==] [Fleet-{fleet_id}] Waiting {repair_time - 300} s"
                 )
                 time.sleep(repair_time - 300)
-            time.sleep(1)
+            time.sleep(0.5)
             self.repair_speed_up(fleet_id=gs_fleet_id)
-            time.sleep(1)
+            time.sleep(0.5)
 
         if fleet_id != gs_fleet_id:
             self._manage_fleet(
                 fleet_id=fleet_id, gs_fleet_id=gs_fleet_id, fleet_layout=""
             )
-            time.sleep(2)
+            time.sleep(0.5)
             self._manage_fleet(fleet_id=fleet_id, fleet_layout=fleet_layout)
 
     def hunt_targets(
@@ -1201,20 +1266,40 @@ class FleetManager:
         time.sleep(3)
 
 
-def test_entrace(fleet_id, map_speed, level, types, clock):
-    fm._fleet_docked(fleet_id)
+def test_entrace(fleet_id: str, map_speed: float, level: int, types: int, clock: int):
+    """
+    Send out a fleet to a target, at a set clock, relative to the target center.
+
+    Args:
+        fleet_id (str): Id of the fleet.
+        map_speed (float): Map speed of the fleet.
+        level (int): Target level.
+        types (int): Target type.
+        clock (int): Entrance relative to the target.
+    """
+    fm.launch(fleet_id=fleet_id)
     targets = fm._filter_by_distance(
         fecthed_targets=fm._fetch_locator_targets(level=level, types=types),
         fleet_id=fleet_id,
         level=level,
     )
     target = fm._pick_target(targets=targets)
-    fm.move(fleet_id, target[0] * 100, target[1] * 100, map_speed, False, False, clock)
+    fm.move(
+        fleet_id=fleet_id,
+        x=target[0] * 100,
+        y=target[1] * 100,
+        map_speed=map_speed,
+        return_dock=False,
+        attack=False,
+        clock=clock,
+        engage_radius=100,
+        in_combat_check=False,
+    )
 
 
 def crew_scenario():
     """
-    Sends out fleets [1-5], each containing a single ship that can destroy the Uranium target. Once all fleets are sent out, rolling for crews is slowly engaged.
+    Sends out fleets [1-5] to hunt uranium targets, each containing a single ship that can destroy the uranium target. Once all fleets are sent out, 20 Threads are inniated to roll for crews.
     """
     tout = time.time() + 60 * 30
     for i in range(1, 6):
@@ -1239,8 +1324,11 @@ def camp_scenario(campaign_levels: list):
     Function accepts level templates for a campaign to be completed by fleet 1, the campaign must be started and a battle has to be engaged by the user.
     After those steps, the script can be continued and level is done following the template provided.
 
-    :param campaign_levels: Description
-    :type campaign_levels: list
+    Args:
+        campaign_levels (list): Target template paths.
+
+    Example:
+        Given campaign_levels = ["targets/some_target.txt", "targets/some_target2.txt"], function cycles over the templates, waiting for user input to either skip a template or use it.
     """
     while True:
         camp_lvls = campaign_levels[:]
@@ -1275,24 +1363,13 @@ def camp_scenario(campaign_levels: list):
 
 if __name__ == "__main__":
     try:
-        config.configs = config.configs_main
         SESSION = requests.Session()
         SESSION.headers.update(_get_headers())
         with SESSION:
-            cm = CrewManager(SESSION)
-            fm = FleetManager(SESSION)
+            cm = CrewManager(session=SESSION)
+            fm = FleetManager(session=SESSION)
 
             # Scenario can be created by calling the respective manager functions..
 
     except KeyboardInterrupt:
         print("shutdown. keyboard interput")
-    # comment out if not on a windows platform
-    except:
-        print("Err")
-        toast = Notification(
-            app_id="Battle pirates script",
-            title="Encountered error",
-            msg="Unhandled exception occured.",
-            duration="long",
-        )
-        toast.show()

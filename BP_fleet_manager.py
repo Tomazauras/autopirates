@@ -1,3 +1,4 @@
+from concurrent.futures import thread
 import hashlib
 import struct
 import requests
@@ -55,6 +56,14 @@ def _get_headers():
 
 
 class CrewManager:
+    """
+    A class used for crew interactions inside the game. Creating, deleting, assigning crews.
+
+    Important variables:
+
+    self.whitelist - A list of crew type ids to look up, when deciding which crews to accept during a roll session. Can be set in "config.py"
+    """
+
     def __init__(self, session):
         """
         CrewManager constructor
@@ -86,16 +95,6 @@ class CrewManager:
         self.delete_last_roll = defaultdict(bool)
 
         self.roll_history = defaultdict(int)
-        self.status = defaultdict(int)
-        self.roll_history_counts = defaultdict(list)
-        self.last_gold_roll = defaultdict(int)
-
-    def _calc_h_hn(self, params_string, seed):
-        hn = random.randint(0, 9999999)
-        h = get_hash(
-            seed=seed, params_string=params_string, random_seed=hn, secure=True
-        )
-        return hn, h
 
     def _generate_hash_string(self, params: dict, action: int):
         """
@@ -106,7 +105,7 @@ class CrewManager:
             action (int): Number associated with an action.
 
         Returns:
-            string (str): parameter aggregate.
+            string (str): Parameter aggregate.
         """
         string = ""
         if action == 0:
@@ -140,20 +139,23 @@ class CrewManager:
             payload (dict): Request form data.
             post (bool): Is request a Post or a Get.
             action (int): Number associated with an action.
-                            0 - create
-                            1 - reroll
-                            2 - accept
-                            3 - delete
-                            4 - uranium balance
-                            5 - crews storage
-                            6 - assign
+                        0 - create
+                        1 - reroll
+                        2 - accept
+                        3 - delete
+                        4 - uranium balance
+                        5 - crews storage
+                        6 - assign
 
         Returns:
             resp (dict): Response data in json format.
         """
         ts = int(time.time())
         param_string = self._generate_hash_string(params=payload, action=action)
-        hn, h = self._calc_h_hn(params_string=param_string, seed=self.seed)
+        hn = random.randint(0, 9999999)
+        h = get_hash(
+            seed=self.seed, params_string=param_string, random_seed=hn, secure=True
+        )
         params.update(
             {
                 "ts": ts,
@@ -224,7 +226,7 @@ class CrewManager:
         Send a request to game server, to create a crew transaction.
 
         Args:
-            transaction_id (int): id of the transaction.
+            transaction_id (int): Id of the transaction.
 
         Returns:
             resp (dict): Response data in json format.
@@ -241,7 +243,7 @@ class CrewManager:
         Send a request to game server, to accept the crew transaction.
 
         Args:
-            transaction_id (int): id of the transaction.
+            transaction_id (int): Id of the transaction.
 
         Returns:
             resp (dict): Response data in json format.
@@ -257,7 +259,7 @@ class CrewManager:
         Send a request to game server, to delete a crew.
 
         Args:
-            long_crew_id (int): long id of the crew.
+            long_crew_id (int): Long id of the crew.
 
         Returns:
             resp (dict): Response data in json format.
@@ -273,8 +275,8 @@ class CrewManager:
         Send a request to game server, to assign a crew to a fleet.
 
         Args:
-            long_crew_id (int): long id of the crew.
-            fleet_id (str): fleet id. ("1"...."15")
+            long_crew_id (int): Long id of the crew.
+            fleet_id (str): Fleet id. ("1"...."15").
 
         Returns:
             resp (dict): Response data in json format.
@@ -290,7 +292,7 @@ class CrewManager:
         ***Thread-locked***. Mark a crew as claimed / in-use.
 
         Args:
-            long_crew_id (int): long id of the crew.
+            long_crew_id (int): Long id of the crew.
 
         Returns:
             _ (bool): False if crew is not in-use. Otherwise marks the crew as claimed and returns True.
@@ -306,7 +308,7 @@ class CrewManager:
         ***Thread-locked***. Releases a crew by calling self._delete_crew, updates crew storage.
 
         Args:
-            crew (dict): crew to be released.
+            crew (dict): Crew to be released.
         """
         with self.claim_lock:
             self.claimed_crews.discard(crew["id"])
@@ -318,7 +320,7 @@ class CrewManager:
         Picks a crew from crew storage, that is not in-use and is of type crew_id.
 
         Args:
-            crew_id (int): short crew id (crew type).
+            crew_id (int): Short crew id (crew type).
 
         Returns:
             crew (dict): Crew object.
@@ -337,7 +339,7 @@ class CrewManager:
             thread (int): Thread number.
 
         Returns:
-            Tuple (int, int): Crew type, Long crew id
+            tuple (int, int): Crew type, Long crew id
         """
         if self.uranium_storage < self.uranium_limit or self.remaining_slots < 2:
             self.can_roll[thread] = False
@@ -366,9 +368,16 @@ class CrewManager:
         """
         Print information about the current crew roll session.
         """
+        _ = defaultdict(int)
+        for k in self.roll_history.keys():
+            _[0] += sum(self.roll_history[k].values())
+            for crew_id, count in self.roll_history[k].items():
+                if crew_id in self.whitelist:
+                    _[crew_id] += count
+
         print(f"====== Crew Status ======")
-        print(f"Rolls : {self.status[0]}")
-        for key, value in self.status.items():
+        print(f"Rolls : {_[0]}")
+        for key, value in _.items():
             if key in self.whitelist:
                 print(f"{self.crew_names[key]} : {value}")
 
@@ -379,14 +388,13 @@ class CrewManager:
         Args:
             thread_count (int): The numbers of threads to use when rolling crews and setting limits.
         """
-        self.uranium_limit *= thread_count * 2
+        self.uranium_limit *= thread_count * 1.4
         self.remaining_slots -= thread_count
         for thread in range(0, thread_count):
             self.can_roll[thread] = (
                 self.uranium_storage > self.uranium_limit and self.remaining_slots > 2
             )
             self.roll_history[thread] = defaultdict(int)
-            self.last_gold_roll[thread] = defaultdict(int)
 
     def fill_crews(self, timeout: float, thread: int = 0):
         """
@@ -406,17 +414,13 @@ class CrewManager:
                     continue
 
             crew_id, crew_id_long = self._roll_crew(thread=thread)
-            if self.delete_last_roll[thread]:
-                self._delete_crew(long_crew_id=crew_id_long)
-                self.delete_last_roll[thread] = False
-            else:
-                self.roll_history[thread][crew_id] += 1
-                self.status[crew_id] += 1
-                self.status[0] += sum(self.roll_history[thread].values())
-                self.roll_history[thread] = defaultdict(int)
-                self.remaining_slots -= 1
-                self._print_status()
-
+            if crew_id is not None:
+                if self.delete_last_roll[thread]:
+                    self._delete_crew(long_crew_id=crew_id_long)
+                    self.delete_last_roll[thread] = False
+                else:
+                    self.roll_history[thread][crew_id] += 1
+                    self.remaining_slots -= 1
             self._set_uranium()
 
     def flush_crews(self, blacklist: set):
@@ -439,21 +443,32 @@ class CrewManager:
 
 
 class FleetManager:
+    """
+    A class used for fleet interactions inside the game. Managing fleet composition, repairing, launching, moving, engaging a target.
+    """
+
     def __init__(self, session):
+        """
+        FleetManager constructor
+
+        Args:
+            session (session): The session object. Used for interacting with the game server.
+        """
         self.session = session
-        self.userid = config.configs_main["userid"]
         self.seed = config.seeds["base"]
         self.world_map_seed = config.seeds["world"]
         self.game_signed_request = config.configs_main["game_signed_request"]
         self.map_signed_request = config.configs_main["map_signed_request"]
         self.signed_request = config.configs_main["signed_request"]
         self.world_index = config.configs_main["world_index"]
+        self.userid = config.configs_main["userid"]
         self.baseid = config.configs_main["baseid"]
         self.base_x = config.configs_main["base_x"]
         self.base_y = config.configs_main["base_y"]
 
         self.map_ids = {}
         self.ship_ids = defaultdict(str)
+        self._get_ship_ids()
         self.claimed_targets = set()
         self.claim_lock = threading.Lock()
         self.repair_lock = threading.Lock()
@@ -480,19 +495,16 @@ class FleetManager:
             m = math.hypot(cx, cy) or 1.0
             self._clock_unit[h] = (cx / m, cy / m)
 
-    def _calc_h_hn(self, params, seed, secure):
-        hn = random.randint(0, 9999999)
-        h = get_hash(seed, params, hn, secure)
-        return hn, h
-
-    def _generate_hash_string(self, params, action):
+    def _generate_hash_string(self, params: dict, action: int):
         """
-        0 - launch\n\t ""
-        1 - move\n\t "seed mapid mapReq worldindex"
-        2 - locator  "count levels minhp types"
-        3 - add/remove ship
-        4 - repair fleet
-        5 - instant rep
+        Generates hash string from params.
+
+        Args:
+            params (dict): Dictionary of parameters.
+            action (int): Number associated with an action.
+
+        Returns:
+            string (str): Parameter aggregate.
         """
         string = ""
         if action == 1:
@@ -516,21 +528,37 @@ class FleetManager:
 
     def _make_request(
         self,
-        endpoint,
-        params=None,
-        payload=None,
-        post=False,
-        put=False,
-        secure=True,
-        action=0,
-        base="kx",
+        endpoint: str,
+        params: dict,
+        payload: dict,
+        post: bool,
+        put: bool,
+        secure: bool,
+        action: int,
+        base: str = "kx",
     ):
-        if params is None:
-            params = {}
+        """
+        Forms a request that is then sent to the game server.
 
-        if payload is None:
-            payload = {}
+        Args:
+            endpoint (str): Request endpoint.
+            params (dict): Request query string parameters.
+            payload (dict): Request form data.
+            post (bool): Is request a Post or a Get.
+            put (bool): Is request a Put or a Get.
+            secure (bool): Should request use secure hashing.
+            action (int): Number associated with an action.
+                        0 - launch\n\t ""
+                        1 - move\n\t "seed mapid mapReq worldindex"
+                        2 - locator  "count levels minhp types"
+                        3 - add/remove ship
+                        4 - repair fleet
+                        5 - instant rep
+            base (str): Is request for Base (kx) or Worldmap.
 
+        Returns:
+            resp (dict): Response data in json format.
+        """
         ts = int(time.time())
 
         if base == "kx":
@@ -556,10 +584,15 @@ class FleetManager:
             )
 
         if action == 2:
-            param_string = self._generate_hash_string(payload, action)
+            param_string = self._generate_hash_string(params=payload, action=action)
         else:
-            param_string = self._generate_hash_string(params, action)
-        hn, h = self._calc_h_hn(param_string, seed, secure)
+            param_string = self._generate_hash_string(params=params, action=action)
+
+        hn = random.randint(0, 9999999)
+        h = get_hash(
+            seed=seed, params_string=param_string, random_seed=hn, secure=secure
+        )
+
         if action == 2:
             payload.update(
                 {
@@ -593,18 +626,55 @@ class FleetManager:
         resp.raise_for_status()
         return resp.json()
 
-    def _distance(self, fleet_id, target_x, target_y):
+    def _distance(self, fleet_id: str, target_x: int, target_y: int):
+        """
+        Calculates distance to target, relative to last known position.
+
+        Args:
+            fleet_id (str): Fleet id. ("1"...."15").
+            target_x (int): X coordinate of the target.
+            target_y (int): Y coordinate of the target.
+
+        Returns:
+            distance (float): Distance to target.
+        """
         last_x, last_y = self._get_position(fleet_id=fleet_id)
         delta_x = last_x - target_x
         delta_y = last_y - target_y
         return math.hypot(delta_x, delta_y)
 
-    def _travel_time(self, distance, map_speed):
+    def _travel_time(self, distance: float, map_speed: float):
+        """
+        Calculates travel time to reach target.
+
+        Args:
+            distance (float): Distance to target.
+            map_speed (float): Fleet map speed.
+
+        Returns:
+            time (float): Travel time to target in seconds.
+        """
         return distance / (map_speed * 4)
 
     def _filter_by_distance(
-        self, fecthed_targets, fleet_id, level=False, max_distance=30000
+        self,
+        fecthed_targets: dict,
+        fleet_id: str,
+        level: str,
+        max_distance: int,
     ):
+        """
+        Filters targets based on distance.
+
+        Args:
+            fecthed_targets (dict): A dictionary of fetched targets information.
+            fleet_id (str): Fleet id. ("1"...."15").
+            level (str): Filter targets to also match level.
+            max_distance (int): The max acceptable distance to the target from current fleet position.
+
+        Returns:
+            targets (list): Target list, sorted in ascending order by distance to the position of the fleet.
+        """
         targets = []
         for target in fecthed_targets["bookmarks"]:
             dist = self._distance(
@@ -615,9 +685,9 @@ class FleetManager:
 
             if dist > max_distance:
                 continue
-
             if level:
-                if target["level"] == level:
+                # TODO check for ',' in level string, if found do itteration for each level separated by ','
+                if target["level"] == int(level):
                     targets.append((target["x"], target["y"], dist, target["id"]))
             else:
                 targets.append((target["x"], target["y"], dist, target["id"]))
@@ -627,37 +697,98 @@ class FleetManager:
 
         return sorted(targets, key=lambda target: target[2])
 
-    def _claim_target(self, target_id):
+    def _claim_target(self, target_id: int):
+        """
+        ***Thread-locked***. Mark a target as claimed / engaged.
+
+        Args:
+            target_id (int): Id of the target.
+
+        Returns:
+            _ (bool): False if target is not engaged. Otherwise marks the target as claimed and returns True.
+        """
         with self.claim_lock:
             if target_id in self.claimed_targets:
                 return False
             self.claimed_targets.add(target_id)
             return True
 
-    def _release_target(self, target_id):
+    def _release_target(self, target_id: int):
+        """
+        ***Thread-locked***. Releases a target, updates claimed target list.
+
+        Args:
+            target_id (int): Id of the target.
+        """
         with self.claim_lock:
             self.claimed_targets.discard(target_id)
 
-    def _pick_target(self, targets):
+    def _pick_target(self, targets: list):
+        """
+        Picks a target, that is not engaged by other fleets. If no target is available - False.
+
+        Args:
+            targets (list): Target list.
+
+        Returns:
+            target (dict): Target object.
+        """
         for t in targets:
             if self._claim_target(t[3]):
                 return t
-        return None
+        return False
 
-    def _fetch_locator_targets(self, level, types):
+    def _fetch_locator_targets(self, level: str, types: str, minHealth: str):
+        """
+        Fetch targets, that match provided parameters.
+
+        Args:
+            level (str): Target levels.
+            types (str): Target type ids.
+            minHealth (str): Minimum target health (0-100).
+
+        Returns:
+            resp (dict): Response data in json format.
+        """
         endpoint = "api/bm/bookmarks/npctargets"
         payload = {
             "count": "100",
-            "levels": str(level),
-            "minHealth": "100",
-            "types": str(types),
+            "levels": level,
+            "minHealth": minHealth,
+            "types": types,
         }
-        return self._make_request(endpoint, payload=payload, action=2, post=True)
+        return self._make_request(
+            endpoint=endpoint,
+            params={},
+            payload=payload,
+            post=True,
+            put=False,
+            secure=True,
+            action=2,
+        )
 
-    def _vengence_targets(self, fleet_id):
+    def _fetch_vengence_targets(self, fleet_id: str, in_sector: bool):
+        """
+        Fetch vengence targets, that match provided parameters.
+
+        Args:
+            fleet_id (str): Fleet id. ("1"...."15").
+            in_sector (bool): Check for targets in users sector.
+
+        Returns:
+            targets (dict): Target list of player bases, sorted in ascending order by distance from fleet_id.
+        """
         endpoint = "api/bm/bookmarks/vengeanceoutsector"
         payload = {}
-        resp = self._make_request(endpoint, payload=payload, action=2, post=True)
+        resp = self._make_request(
+            endpoint=endpoint,
+            params={},
+            payload=payload,
+            post=True,
+            put=False,
+            secure=True,
+            action=2,
+        )
         targets = {"bookmarks": []}
         for target in resp["bookmarks"]:
             if (
@@ -668,27 +799,44 @@ class FleetManager:
                 continue
             targets["bookmarks"].append(target)
 
-        endpoint = "api/bm/bookmarks/vengeanceinsector"
-        resp = self._make_request(endpoint, payload=payload, action=2, post=True)
-        for target in resp["bookmarks"]:
-            if (
-                target["rank"] == "3"
-                or target["rank"] == "4"
-                or (target["rank"] == "2" and target["level"] > 100)
-            ):
-                continue
-            targets["bookmarks"].append(target)
-        return self._filter_by_distance(resp, fleet_id, False, 50000)
+        if in_sector:
+            endpoint = "api/bm/bookmarks/vengeanceinsector"
+            resp = self._make_request(
+                endpoint=endpoint,
+                params={},
+                payload=payload,
+                post=True,
+                put=False,
+                secure=True,
+                action=2,
+            )
+            for target in resp["bookmarks"]:
+                if (
+                    target["rank"] == "3"
+                    or target["rank"] == "4"
+                    or (target["rank"] == "2" and target["level"] > 100)
+                ):
+                    continue
+                targets["bookmarks"].append(target)
+        return self._filter_by_distance(targets, fleet_id, False, 50000)
 
-    def _get_approach_clock(self, fleet_id, target_x, target_y):
+    def _get_approach_clock(self, fleet_id: str, target_x: int, target_y: int):
+        """
+        Calculates best angle of engagement to a target, relative to last known position.
+
+        Args:
+            fleet_id (str): Fleet id. ("1"...."15").
+            target_x (int): X coordinate of the target.
+            target_y (int): Y coordinate of the target.
+
+        Returns:
+            clock (int): Engagement clock position relative to the target.
+        """
         last_x, last_y = self._get_position(fleet_id=fleet_id)
 
-        tx = target_x * 100
-        ty = target_y * 100
-
         # Vector from target to fleet's last known position
-        dx = last_x - tx
-        dy = last_y - ty
+        dx = last_x - target_x
+        dy = last_y - target_y
         mag = math.hypot(dx, dy)
         if mag < 1e-6:
             return 12
@@ -705,7 +853,16 @@ class FleetManager:
                 best_h = h
         return best_h
 
-    def _pre_launch_payload(self, fleet_id):
+    def _pre_launch_payload(self, fleet_id: str):
+        """
+        Uses data from **self.get_fleets** to craft payload information for the **self.launch** function.
+
+        Args:
+            fleet_id (str): Fleet id. ("1"...."15").
+
+        Returns:
+            payload (dict): Dictionary containing fleet and miscellaneous information required for a fleet launch request. If fleet information is not found - False.
+        """
         response = self.get_fleets()
         fleet_payload = {
             "ships": {},
@@ -720,30 +877,38 @@ class FleetManager:
                                 "id": int(ship["actives"]["id"]),
                                 "dock": "base",
                             }
-                break
+                        return fleet_payload
+        return False
 
-        return fleet_payload
-
-    def _get_ship_ids(self, fleet_id):
+    def _get_ship_ids(self):
+        """
+        Uses data from **self.get_fleets** to get the composition of ships for fleets 1-15
+        """
         response = self.get_fleets()
-        fleet_payload = {
-            "ships": {},
-        }
         for k, v in response.items():
             if k == "fleets":
                 for fleet in v:
-                    if fleet["id"] == fleet_id:
-                        for ship in fleet["ships"]:
-                            fleet_payload["ships"][ship["actives"]["fltp"]] = {
-                                "id": int(ship["actives"]["id"]),
-                                "dock": "base",
-                            }
-                break
-        if not self.ship_ids[fleet_id]:
-            self.ship_ids[fleet_id] = fleet_payload
-        return fleet_payload
+                    fleet_payload = {
+                        "ships": {},
+                    }
+                    for ship in fleet["ships"]:
+                        fleet_payload["ships"][ship["actives"]["fltp"]] = {
+                            "id": int(ship["actives"]["id"]),
+                            "dock": "base",
+                        }
+                    if not self.ship_ids[fleet["id"]]:
+                        self.ship_ids[fleet["id"]] = fleet_payload
 
-    def _fleet_docked(self, fleet_id):
+    def _fleet_docked(self, fleet_id: str):
+        """
+        Checks if a fleet is docked in base.
+
+        Args:
+            fleet_id (str): Fleet id. ("1"...."15").
+
+        Returns:
+            docked (bool): True if fleet is docked, False if out in worldmap.
+        """
         response = self.get_fleets()
         for k, v in response.items():
             if k == "fleets":
@@ -753,7 +918,17 @@ class FleetManager:
                             self.map_ids[fleet["id"]] = fleet["mapId"]
                         return fleet["is_on_map"] == False
 
-    def _fleet_in_combat(self, fleet_id, map_speed):
+    def _fleet_in_combat(self, fleet_id: str, map_speed: float):
+        """
+        Checks if a fleet is engaged in combat, by sending a move request.
+
+        Args:
+            fleet_id (str): Fleet id. ("1"...."15").
+            map_speed (float): Fleet map speed.
+
+        Returns:
+            tuple (str, int, str): If fleet engaged (combat_guid, engage_id, server_url), otherwise (None, None, None).
+        """
         last_x, last_y = self._get_position(fleet_id=fleet_id)
         resp = self.move(
             fleet_id=fleet_id,
@@ -769,15 +944,46 @@ class FleetManager:
             return str(combat_guid), int(engage_id), server_url
         return None, None, None
 
-    def _update_position(self, fleet_id, x, y):
+    def _update_position(self, fleet_id: str, x: int, y: int):
+        """
+        ***Thread-locked***. Updates last known fleet position to given x, y.
+
+        Args:
+            fleet_id (str): Fleet id. ("1"...."15").
+            target_x (int): X coordinate of the target.
+            target_y (int): Y coordinate of the target.
+
+        """
         with self.pos_lock:
             self.positions[fleet_id] = (x, y)
 
-    def _get_position(self, fleet_id):
+    def _get_position(self, fleet_id: str):
+        """
+        ***Thread-locked***. Returns last known fleet position x, y.
+
+        Args:
+            fleet_id (str): Fleet id. ("1"...."15").
+
+        Returns:
+            tuple (int, int): Last known x, y of the fleet.
+        """
         with self.pos_lock:
             return self.positions.get(fleet_id, (self.base_x, self.base_y))
 
-    def _manage_fleet(self, fleet_id, gs_fleet_id=False, fleet_layout=""):
+    def _manage_fleet(
+        self, fleet_id: str, gs_fleet_id: str = "", fleet_layout: str = ""
+    ):
+        """
+        Updates fleet composition according to **fleet_layout**.
+
+        Args:
+            fleet_id (str): Fleet id. ("1"...."15").
+            gs_fleet_id (str): Fleet id which has a half-repair crew assigned to it. ("1"...."15").
+            fleet_layout (str): Fleet composition. E.g. "135" would put ships in slots 1,3 and 5.
+
+        Returns:
+            resp (dict): Response data in json format.
+        """
         if gs_fleet_id:
             endpoint = f"dock/base/fleets/{gs_fleet_id}"
         else:
@@ -790,22 +996,36 @@ class FleetManager:
             else:
                 payload["ships"][flp] = self.ship_ids[fleet_id]["ships"][flp]
 
-        return self._make_request(endpoint, payload=payload, put=True, action=3)
+        return self._make_request(
+            endpoint=endpoint,
+            params={},
+            payload=payload,
+            post=False,
+            put=True,
+            secure=True,
+            action=3,
+        )
 
-    def _fuse(self, instance_id, source_id, amount):
+    def _fuse(self, instance_id: str, source_id: int, amount: int):
         """
         Experimental.
 
-        Loading a fuseable object inside a browser session,
-        sending a fuse request through the help of the script,
-        lastly coming back to the browser session and sending the fuse request leads to a bug/crash.
+        1) Loading a fuse-able item in-game,
+        2) sending a fuse request through the script,
+        3) coming back to the game and fusing the item leads to a bug/crash.
 
         Following the steps - double crafting can be achieved. This is logged as an error on the server side!
         USE WITH CAUTION
 
-        :param self: Description
-        :param source_id: Description
-        :param amount: Description
+        To get instanceId inspect network requests while fusing an item in-game.
+
+        Args:
+            instance_id (str): id.
+            source_id (int): id of the item.
+            amount (int): amount to fuse.
+
+        Returns:
+            resp (dict): Response data in json format.
         """
         endpoint = "base/transitions"
         payload = {
@@ -823,17 +1043,37 @@ class FleetManager:
                 }
             ],
         }
-        return self._make_request(endpoint, payload=payload, post=True, action=5)
+        return self._make_request(
+            endpoint=endpoint,
+            params={},
+            payload=payload,
+            post=True,
+            put=False,
+            secure=True,
+            action=5,
+        )
 
     def _start_campaign_encounter(
         self,
-        level,
-        fleet_id,
-        gs_fleet_id,
-        ship_count,
-        map_speed,
-        base_repair=False,
+        level: str,
+        fleet_id: str,
+        gs_fleet_id: str,
+        ship_count: int,
+        map_speed: float,
+        base_repair: bool,
     ):
+        """
+        Established a websocket connection with the server handling the fleet engagement, follows a user-defined level template to complete the engagement.
+
+        Args:
+            level (str): Target levels.
+            fleet_id (str): Fleet id. ("1"...."15").
+            gs_fleet_id (str): Fleet id which has a half-repair crew assigned to it. ("1"...."15").
+            ship_count (int): Amount of ships in the fleet.
+            map_speed (float): Fleet map speed.
+            base_repair (bool): Should fleet be repaired after an engagement.
+
+        """
         level_template = []
         with open(level, "r") as f:
             for line in f.readlines():
@@ -905,6 +1145,14 @@ class FleetManager:
             )
 
     def _handle_heartbeat(self, websocket, battle_end_event):
+        """
+        Checks for heartbeat messages from the server, when a message is received a response is sent back.
+
+        Args:
+            websocket: Websocket object.
+            battle_end_event: Thread event.
+
+        """
         try:
             while websocket.connected:
                 try:
@@ -932,6 +1180,17 @@ class FleetManager:
             # print("Heartbeat thread stopped")
 
     def _ws_handshake(self, combat_guid: str, engage_id: int, user_id: int) -> str:
+        """
+        Generate a handshake to use when establishing a websocket connection to the server handling a fleet engagement.
+
+        Args:
+            combat_guid (str): Combat guid of the engagement.
+            engage_id (int): Engage id of the engagement.
+            user_id (int): User id.
+
+        Returns:
+            msg (bytes): handshake information for websocket connection.
+        """
         msg = bytearray(b"CLN")  # writeUTFBytes("CLN") -> raw ASCII
         msg.extend(struct.pack("<I", user_id))  # little-endian 4-byte int
         msg.extend(struct.pack("<I", engage_id))  # little-endian 4-byte int
@@ -951,6 +1210,19 @@ class FleetManager:
         server_url: str,
         return_ws: bool = False,
     ):
+        """
+        Start a websocket connection with the server handling the fleet engagement.
+
+        Args:
+            combat_guid (str): Combat guid of the engagement.
+            engage_id (int): Engage id of the engagement.
+            user_id (int): User id.
+            server_url (str): Server url of the server that is handling the engagement.
+            return_ws (bool): Return websocket object for further action.
+
+        Returns:
+            ws (websocket): Websocket object.
+        """
         ws = websocket.create_connection(
             "wss://" + server_url + ":3443",
             header=[
@@ -990,12 +1262,38 @@ class FleetManager:
         except Exception as e:
             print("No response:", e)
 
-    def repair_fleet(self, fleet_id):
+    def repair_fleet(self, fleet_id: str):
+        """
+        Send a repair request to start repairing a fleet.
+
+        Args:
+            fleet_id (str): Fleet id. ("1"...."15").
+
+        Returns:
+            resp (dict): Response data in json format.
+        """
         endpoint = "dock/base/repair"
         payload = {"fleet": int(fleet_id)}
-        return self._make_request(endpoint, payload=payload, put=True, action=4)
+        return self._make_request(
+            endpoint=endpoint,
+            params={},
+            payload=payload,
+            post=False,
+            put=True,
+            secure=True,
+            action=4,
+        )
 
-    def repair_speed_up(self, fleet_id):
+    def repair_speed_up(self, fleet_id: str):
+        """
+        Send a repair speed up request. Used when an ongoing repair is less than 5 minutes from completion.
+
+        Args:
+            fleet_id (str): Fleet id. ("1"...."15").
+
+        Returns:
+            resp (dict): Response data in json format.
+        """
         endpoint = "dock/base/repair/default"
         payload = {
             "fleet": fleet_id,
@@ -1004,17 +1302,42 @@ class FleetManager:
             "currency_id": 0,
             "quantity": 1,
         }
-        return self._make_request(endpoint, payload=payload, post=True, action=5)
+        return self._make_request(
+            endpoint=endpoint,
+            params={},
+            payload=payload,
+            post=True,
+            put=False,
+            secure=True,
+            action=5,
+        )
 
     def get_fleets(self):
-        """Returns all docked/active fleets for this user."""
-        endpoint = f"users/{self.userid}/dock/base/fleets"
-        return self._make_request(endpoint)
-
-    def launch(self, fleet_id):
         """
-        Possible failure \n
-        \t'success': False, 'error': 'Fleet is not in a launchable state'
+        Returns all docked/active fleets for this user.
+        Returns:
+            resp (dict): Response data in json format.
+        """
+        endpoint = f"users/{self.userid}/dock/base/fleets"
+        return self._make_request(
+            endpoint=endpoint,
+            params={},
+            payload={},
+            post=False,
+            put=False,
+            secure=True,
+            action=0,
+        )
+
+    def launch(self, fleet_id: str):
+        """
+        Launch a fleet out to worldmap.
+
+        Args:
+            fleet_id (str): Fleet id. ("1"...."15").
+
+        Returns:
+            resp (dict): Response data in json format.
         """
         fleet_id = str(fleet_id)
         if not self._fleet_docked(fleet_id):
@@ -1023,32 +1346,55 @@ class FleetManager:
 
         endpoint = f"dock/base/fleets/{fleet_id}"
         payload = self._pre_launch_payload(fleet_id)
-        resp = self._make_request(endpoint, payload=payload, action=0, post=True)
+        resp = self._make_request(
+            endpoint=endpoint,
+            params={},
+            payload=payload,
+            post=True,
+            put=False,
+            secure=True,
+            action=0,
+        )
         self._fleet_docked(fleet_id)
-        # print(f"[Fleet-{fleet_id}] launched")
         return resp
 
     def move(
         self,
-        fleet_id,
-        x,
-        y,
-        map_speed,
-        return_dock=False,
-        attack=False,
-        clock=False,
-        engage_radius=100,
-        in_combat_check=False,
+        fleet_id: str,
+        x: int,
+        y: int,
+        map_speed: float,
+        return_dock: bool = False,
+        attack: int = 0,
+        clock: int = 0,
+        engage_radius: int = 100,
+        in_combat_check: bool = False,
     ):
         """
-        param string for hash
-        world_seed action mapid world_index
+        Send a move request. This is used for moving the fleet, attacking a target, docking to base.
+
+        Args:
+            fleet_id (str): Fleet id. ("1"...."15").
+            x (int): X coordinate of the target.
+            y (int): Y coordinate of the target.
+            map_speed (float): Fleet map speed.
+            return_dock (bool): Is the fleet docking.
+            attack (int): target id. 0 if not engaging a target.
+            clock (int): Engage target from o'clock.
+            engage_radius (int): Engage radius to the target.
+            in_combat_check (bool): For logging purposes.
+
+        Returns:
+            resp (dict): Response data in json format.
         """
 
-        if clock:
-            dx, dy = self.clock_map[clock]
-            x = x + math.ceil(dx * engage_radius)
-            y = y + math.ceil(dy * engage_radius)
+        if not clock:
+            clock = self._get_approach_clock(fleet_id=fleet_id, target_x=x, target_y=y)
+
+        dx, dy = self.clock_map[clock]
+        x = x + math.ceil(dx * engage_radius)
+        y = y + math.ceil(dy * engage_radius)
+
         log_str = f"[Fleet-{fleet_id}] "
         if return_dock:
             action_string = (
@@ -1073,14 +1419,26 @@ class FleetManager:
             "worldindex": self.world_index,
         }
         return self._make_request(
-            endpoint,
+            endpoint=endpoint,
             params=params,
+            payload={},
+            post=False,
+            put=False,
             secure=False,
             action=1,
             base="web",
         )
 
-    def lazy_repair(self, fleet_id, gs_fleet_id, ship_count):
+    def lazy_repair(self, fleet_id: str, gs_fleet_id: str, ship_count: int):
+        """
+        Complete the workflow of repairing a fleet.
+
+        Args:
+            fleet_id (str): Fleet id. ("1"...."15").
+            gs_fleet_id (str): Fleet id which has a half-repair crew assigned to it. ("1"...."15").
+            ship_count (int): Amount of ships in the fleet.
+
+        """
         if not self._fleet_docked(fleet_id=fleet_id):
             print("Send fleet to dock first")
             time.sleep(25)
@@ -1119,21 +1477,37 @@ class FleetManager:
 
     def hunt_targets(
         self,
-        fleet_id,
-        gs_fleet_id,
-        level,
-        types,
-        timeout,
-        clock=12,
-        map_speed=443.5,
-        ship_count=5,
-        target_template=False,
-        base_repair=False,
+        fleet_id: str,
+        gs_fleet_id: str,
+        level: str,
+        types: str,
+        minHealth: str,
+        timeout: float,
+        clock: int = 12,
+        map_speed: float = 443.5,
+        ship_count: int = 5,
+        target_template: str = "",
+        base_repair: bool = False,
     ):
-        self._get_ship_ids(fleet_id=fleet_id)
-        self.launch(fleet_id=fleet_id)
-        time.sleep(2)
+        """
+        Start the workflow of sending a fleet out to worldmap, to engage a target type - either without breaks until fleet is dead or with returns, after each engagement to repair the fleet in base.
 
+        Args:
+            fleet_id (str): Fleet id. ("1"...."15").
+            gs_fleet_id (str): Fleet id which has a half-repair crew assigned to it. ("1"...."15").
+            level (str): Target levels.
+            types (str): Target type ids.
+            minHealth (str): Minimum target health (0-100).
+            timeout (float): time offset from current timestamp.
+            clock (int): Engage target from o'clock.
+            map_speed (float): Fleet map speed.
+            ship_count (int): Amount of ships in the fleet.
+            target_template (str): Path to a user-defined target template to follow.
+            base_repair (bool): Should fleet be repaired after an engagement.
+
+        """
+        self.launch(fleet_id=fleet_id)
+        time.sleep(1)
         level_template = []
         if target_template:
             with open(target_template, "r") as f:
@@ -1144,10 +1518,12 @@ class FleetManager:
                     level_template.append((cmd_bytes, delay))
         while time.time() < timeout:
             targets = self._filter_by_distance(
-                fecthed_targets=self._fetch_locator_targets(level=level, types=types),
+                fecthed_targets=self._fetch_locator_targets(
+                    level=level, types=types, minHealth=minHealth
+                ),
                 fleet_id=fleet_id,
                 level=level,
-                max_distance=80000,
+                max_distance=50000,
             )
 
             if not targets:
@@ -1203,7 +1579,6 @@ class FleetManager:
                         hb_thread.join(timeout=2)
                         if websocket.connected:
                             websocket.close()
-                        # print(f"[Fleet-{fleet_id}] Battle ended and connection closed.")
                     else:
                         self.start_engagement(
                             combat_guid=combat_guid,
@@ -1212,7 +1587,7 @@ class FleetManager:
                             server_url=server_url,
                         )
 
-                time.sleep(2)
+                time.sleep(1)
                 while True:
                     combat_guid, _, _ = self._fleet_in_combat(
                         fleet_id=fleet_id, map_speed=map_speed
@@ -1223,7 +1598,9 @@ class FleetManager:
                     time.sleep(10)
             finally:
                 self._release_target(target_id=target[3])
-                print(f"[Fleet-{fleet_id}] {(timeout - time.time()) / 60 :f} min left")
+                print(
+                    f"[Fleet-{fleet_id}] {(timeout - time.time()) / 60 :.2f} min left"
+                )
 
             if base_repair:
                 delay = self._distance(
@@ -1242,7 +1619,7 @@ class FleetManager:
                         map_speed=map_speed,
                     )
                 )
-                time.sleep(3)
+                time.sleep(1)
 
                 with self.repair_lock:
                     self.lazy_repair(
@@ -1253,7 +1630,7 @@ class FleetManager:
 
                 time.sleep(1)
                 self.launch(fleet_id=fleet_id)
-                time.sleep(2)
+                time.sleep(1)
 
         time.sleep(1)
         self.move(
@@ -1309,13 +1686,24 @@ def crew_scenario():
         ).start()
         time.sleep(15)
 
-    cm._set_defaults(25)
-    for i in range(20):
+    for i in range(6, 8):
+        threading.Thread(
+            target=fm.hunt_targets,
+            args=(str(i), str(i), 13, 343, tout, 12, 406, 1, False, False),
+        ).start()
+        time.sleep(10)
+
+    cm._set_defaults(40)
+    for i in range(40):
         threading.Thread(
             target=cm.fill_crews,
             args=(tout, i),
         ).start()
         time.sleep(1)
+
+    while time.time() < tout:
+        cm._print_status()
+        time.sleep(60)
 
 
 def camp_scenario(campaign_levels: list):

@@ -10,7 +10,7 @@ Use the package manager [pip](https://pip.pypa.io/en/stable/) to install the req
 pip install requests websocket-client
 ```
 
-## Usage
+## Before first start
 
 Before starting the script, variables inside **./config.py** must be set. The variables can be accessed/extracted by inspecting network traffic, while having the game open inside a browser.
 
@@ -83,8 +83,9 @@ cm._assign_crew(long_crew_id=demo["id"], fleet_id="1")
 fm.hunt_targets(
     fleet_id="1",
     gs_fleet_id="1",
-    level=51,
-    types=720,
+    level="51",
+    types="720",
+    minHealth="100",
     timeout=tout,
     clock=6,
     map_speed=125,

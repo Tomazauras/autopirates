@@ -1,6 +1,6 @@
-from concurrent.futures import thread
 import hashlib
 import struct
+from typing import NotRequired, TypedDict
 import requests
 import websocket
 import random
@@ -9,16 +9,17 @@ import time
 import os
 import threading
 from collections import defaultdict
+from collections.abc import Mapping
 
 import config
 
 BASE_URL = config.links["base_url"]
 WORLD_MAP_URL = config.links["world_map_url"]
-LOG_FOLDER = os.getcwd() + "\logs"
+LOG_FOLDER = os.getcwd() + "/logs"
 
 
-def get_salt(seed):
-    d = []
+def get_salt(seed: str):
+    d: list[str] = []
     for i in range(len(seed) - 1, -1, -1):
         c = 90 - ord(seed[i]) + 97
         if c == 139:
@@ -33,7 +34,7 @@ def get_num(n: int):
     return (n % 11) * n
 
 
-def get_hash(seed, params_string: str, random_seed: int, secure: bool):
+def get_hash(seed: str, params_string: str, random_seed: int, secure: bool):
     num = get_num(n=random_seed)
     if secure:
         salt = get_salt(seed=seed)
@@ -51,7 +52,7 @@ def _get_headers():
         "Connection": "keep-alive",
         "Origin": BASE_URL,
         "Referer": f"{BASE_URL}/canvas",
-        "Cookie": f'PHPSESSID={config.configs_main["phpsessid"]}',
+        "Cookie": f'PHPSESSID={config.cookies["phpsessid"]}',
     }
 
 
@@ -64,7 +65,7 @@ class CrewManager:
     self.whitelist - A list of crew type ids to look up, when deciding which crews to accept during a roll session. Can be set in "config.py"
     """
 
-    def __init__(self, session):
+    def __init__(self, session: requests.Session):
         """
         CrewManager constructor
 
@@ -72,10 +73,10 @@ class CrewManager:
             session (session): The session object. Used for interacting with the game server.
         """
         self.session = session
-        self.userid = config.configs_main["userid"]
+        self.userid = config.user["userid"]
         self.seed = config.seeds["base"]
-        self.game_signed_request = config.configs_main["game_signed_request"]
-        self.signed_request = config.configs_main["signed_request"]
+        self.game_signed_request = config.cookies["game_signed_request"]
+        self.signed_request = config.cookies["signed_request"]
 
         self.whitelist = config.whitelist_crews
         self.blacklist = config.blacklist_crews
@@ -84,19 +85,19 @@ class CrewManager:
         self.uranium_storage = 0
         self.uranium_limit = 1000
         self.remaining_slots = 0
-        self.crew_storage = []
+        self.crew_storage: list[dict[str, str]] = []
         self._set_crews()
         self._set_uranium()
 
-        self.claimed_crews = set()
+        self.claimed_crews: set[int] = set()
         self.claim_lock = threading.Lock()
 
-        self.can_roll = defaultdict(bool)
-        self.delete_last_roll = defaultdict(bool)
+        self.can_roll: defaultdict[int, bool] = defaultdict(bool)
+        self.delete_last_roll: defaultdict[int, bool] = defaultdict(bool)
 
-        self.roll_history = defaultdict(int)
+        self.roll_history: dict[int, dict[int, int]] = {}
 
-    def _generate_hash_string(self, params: dict, action: int):
+    def _generate_hash_string(self, params: Mapping[str, str | int], action: int):
         """
         Generates hash string from params.
 
@@ -107,26 +108,27 @@ class CrewManager:
         Returns:
             string (str): Parameter aggregate.
         """
+        new_params = dict(params)
         string = ""
         if action == 0:
-            string += str(params["packId"])
+            string += str(new_params["packId"])
         elif action == 1 or action == 2:
-            string += str(params["transactionId"])
+            string += str(new_params["transactionId"])
         elif action == 3:
-            string += str(params["id"])
+            string += str(new_params["id"])
         elif action == 4:
-            string += str(params["currencyid"])
-            string += str(params["userid"])
+            string += str(new_params["currencyid"])
+            string += str(new_params["userid"])
         elif action == 6:
-            string += str(params["fleet_id"])
-            string += str(params["id"])
+            string += str(new_params["fleet_id"])
+            string += str(new_params["id"])
         return string
 
     def _make_request(
         self,
         endpoint: str,
-        params: dict,
-        payload: dict,
+        params: Mapping[str, str | int | float],
+        payload: Mapping[str, str | int],
         post: bool,
         action: int,
     ):
@@ -150,13 +152,17 @@ class CrewManager:
         Returns:
             resp (dict): Response data in json format.
         """
+
+        new_params = dict(params)
+        new_payload = dict(payload)
+
         ts = int(time.time())
-        param_string = self._generate_hash_string(params=payload, action=action)
+        param_string = self._generate_hash_string(params=new_payload, action=action)
         hn = random.randint(0, 9999999)
         h = get_hash(
             seed=self.seed, params_string=param_string, random_seed=hn, secure=True
         )
-        params.update(
+        new_params.update(
             {
                 "ts": ts,
                 "signed_request": self.signed_request,
@@ -166,13 +172,13 @@ class CrewManager:
             }
         )
 
-        payload.update({"hn": str(hn), "h": h})
+        new_payload.update({"hn": str(hn), "h": h})
 
         url = f"{BASE_URL}/{endpoint}"
         if post:
-            resp = self.session.post(url, params=params, data=payload)
+            resp = self.session.post(url, params=new_params, data=new_payload)
         else:
-            resp = self.session.get(url, params=params)
+            resp = self.session.get(url, params=new_params)
 
         resp.raise_for_status()
         return resp.json()
@@ -282,7 +288,7 @@ class CrewManager:
             resp (dict): Response data in json format.
         """
         endpoint = config.links["assign"]
-        payload = {"id": long_crew_id, "fleet_id": fleet_id}
+        payload: dict[str, int | str] = {"id": long_crew_id, "fleet_id": fleet_id}
         return self._make_request(
             endpoint=endpoint, params={}, payload=payload, post=True, action=6
         )
@@ -303,7 +309,7 @@ class CrewManager:
             self.claimed_crews.add(long_crew_id)
             return True
 
-    def _release_crew(self, crew: dict):
+    def _release_crew(self, crew: dict[str, str]):
         """
         ***Thread-locked***. Releases a crew by calling self._delete_crew, updates crew storage.
 
@@ -311,9 +317,9 @@ class CrewManager:
             crew (dict): Crew to be released.
         """
         with self.claim_lock:
-            self.claimed_crews.discard(crew["id"])
+            self.claimed_crews.discard(int(crew["id"]))
             self.crew_storage.remove(crew)
-            self._delete_crew(crew["id"])
+            self._delete_crew(int(crew["id"]))
 
     def _pick_crew(self, crew_id: int):
         """
@@ -327,7 +333,7 @@ class CrewManager:
         """
         for crew in self.crew_storage:
             if int(crew["crew_id"]) == crew_id and crew["fleet_id"] == "0":
-                if self._claim_crew(long_crew_id=crew["id"]):
+                if self._claim_crew(long_crew_id=int(crew["id"])):
                     return crew
         return False
 
@@ -368,7 +374,7 @@ class CrewManager:
         """
         Print information about the current crew roll session.
         """
-        _ = defaultdict(int)
+        _: defaultdict[int, int] = defaultdict(int)
         for k in self.roll_history.keys():
             _[0] += sum(self.roll_history[k].values())
             for crew_id, count in self.roll_history[k].items():
@@ -381,7 +387,7 @@ class CrewManager:
             if key in self.whitelist:
                 print(f"{self.crew_names[key]} : {value}")
 
-    def _set_defaults(self, thread_count: int):
+    def set_defaults(self, thread_count: int):
         """
         Adjusts self.uranium_limit and self.remaining_slots in response to thread_count.
 
@@ -404,6 +410,8 @@ class CrewManager:
             timeout (float): Time offset to the future.
             thread (int): Thread number.
         """
+        if thread not in self.roll_history:
+            self.roll_history[thread] = defaultdict(int)
         while time.time() < timeout and self.remaining_slots > 2:
             if not self.can_roll[thread]:
                 if self.uranium_storage > self.uranium_limit:
@@ -414,7 +422,7 @@ class CrewManager:
                     continue
 
             crew_id, crew_id_long = self._roll_crew(thread=thread)
-            if crew_id is not None:
+            if crew_id is not None and crew_id_long is not None:
                 if self.delete_last_roll[thread]:
                     self._delete_crew(long_crew_id=crew_id_long)
                     self.delete_last_roll[thread] = False
@@ -423,22 +431,22 @@ class CrewManager:
                     self.remaining_slots -= 1
             self._set_uranium()
 
-    def flush_crews(self, blacklist: set):
+    def flush_crews(self, blacklist: bool):
         """
         Delete all crews from storage.
 
         Args:
-            blacklist (set): Use a blacklist instead, containing crew ids / types to delete from storage.
+            blacklist (bool): Use a blacklist defined in config.py, containing crew ids / types to delete from storage.
         """
         if not self.crew_storage:
             self._set_crews()
         for crew in self.crew_storage:
             if blacklist:
                 if int(crew["crew_id"]) in self.blacklist:
-                    self._delete_crew(crew["id"])
+                    self._delete_crew(int(crew["id"]))
                     print(f'deleted {self.crew_names[int(crew["crew_id"])]}')
             else:
-                self._delete_crew(crew["id"])
+                self._delete_crew(int(crew["id"]))
                 print(f'deleted {self.crew_names[int(crew["crew_id"])]}')
 
 
@@ -447,7 +455,7 @@ class FleetManager:
     A class used for fleet interactions inside the game. Managing fleet composition, repairing, launching, moving, engaging a target.
     """
 
-    def __init__(self, session):
+    def __init__(self, session: requests.Session):
         """
         FleetManager constructor
 
@@ -457,26 +465,26 @@ class FleetManager:
         self.session = session
         self.seed = config.seeds["base"]
         self.world_map_seed = config.seeds["world"]
-        self.game_signed_request = config.configs_main["game_signed_request"]
-        self.map_signed_request = config.configs_main["map_signed_request"]
-        self.signed_request = config.configs_main["signed_request"]
-        self.world_index = config.configs_main["world_index"]
-        self.userid = config.configs_main["userid"]
-        self.baseid = config.configs_main["baseid"]
-        self.base_x = config.configs_main["base_x"]
-        self.base_y = config.configs_main["base_y"]
+        self.game_signed_request = config.cookies["game_signed_request"]
+        self.map_signed_request = config.cookies["map_signed_request"]
+        self.signed_request = config.cookies["signed_request"]
+        self.world_index = config.user["world_index"]
+        self.userid = config.user["userid"]
+        self.baseid = config.user["baseid"]
+        self.base_x = config.user["base_x"]
+        self.base_y = config.user["base_y"]
 
-        self.map_ids = {}
-        self.ship_ids = defaultdict(str)
+        self.map_ids: dict[str, int] = {}
+        self.ship_ids: FleetManager._FleetPayload
         self._get_ship_ids()
-        self.claimed_targets = set()
+        self.claimed_targets: set[int] = set()
         self.claim_lock = threading.Lock()
         self.repair_lock = threading.Lock()
 
-        self.positions = {}
+        self.positions: dict[str, tuple[int, int]] = {}
         self.pos_lock = threading.Lock()
 
-        self.clock_map = {
+        self.clock_map: dict[int, tuple[float, float]] = {
             12: (-1, -1),
             1: (-0.33, -1),
             2: (0.33, -1),
@@ -490,12 +498,30 @@ class FleetManager:
             10: (-1, 0.33),
             11: (-1, -0.33),
         }
-        self._clock_unit = {}
+        self._clock_unit: dict[int, tuple[float, float]] = {}
         for h, (cx, cy) in self.clock_map.items():
             m = math.hypot(cx, cy) or 1.0
             self._clock_unit[h] = (cx / m, cy / m)
 
-    def _generate_hash_string(self, params: dict, action: int):
+    class _Ship(TypedDict):
+        id: int | None
+        dock: NotRequired[str]
+
+    class _FleetPayload(TypedDict):
+        ships: dict[str, FleetManager._Ship]
+        launch: NotRequired[str]
+
+    def _generate_hash_string(
+        self,
+        params: (
+            Mapping[
+                str,
+                str | int | float | list[str | dict[str, str | int | dict[str, int]]],
+            ]
+            | FleetManager._FleetPayload
+        ),
+        action: int,
+    ):
         """
         Generates hash string from params.
 
@@ -506,31 +532,38 @@ class FleetManager:
         Returns:
             string (str): Parameter aggregate.
         """
+        new_params = dict(params)
         string = ""
         if action == 1:
             string += self.world_map_seed
-            string += params["actions"]
-            string += str(params["id"])
-            string += params["map_signed_request"]
-            string += str(params["worldindex"])
+            string += str(new_params["actions"])
+            string += str(new_params["id"])
+            string += str(new_params["map_signed_request"])
+            string += str(new_params["worldindex"])
         elif action == 2:
-            if params.get("campaignId", False):
-                string += params["campaignId"]
-            if params.get("count", False):
-                string += params["count"]
-            if params.get("levels", False):
-                string += params["levels"]
-            if params.get("minHealth", False):
-                string += params["minHealth"]
-            if params.get("types", False):
-                string += params["types"]
+            if new_params.get("campaignId", False):
+                string += str(new_params["campaignId"])
+            if new_params.get("count", False):
+                string += str(new_params["count"])
+            if new_params.get("levels", False):
+                string += str(new_params["levels"])
+            if new_params.get("minHealth", False):
+                string += str(new_params["minHealth"])
+            if new_params.get("types", False):
+                string += str(new_params["types"])
         return string
 
     def _make_request(
         self,
         endpoint: str,
-        params: dict,
-        payload: dict,
+        params: Mapping[str, str | int | float],
+        payload: (
+            Mapping[
+                str,
+                str | int | list[str | dict[str, str | int | dict[str, int]]],
+            ]
+            | FleetManager._FleetPayload
+        ),
         post: bool,
         put: bool,
         secure: bool,
@@ -559,12 +592,13 @@ class FleetManager:
         Returns:
             resp (dict): Response data in json format.
         """
+        new_params = dict(params)
         ts = int(time.time())
 
         if base == "kx":
             seed = self.seed
             domain = BASE_URL
-            params.update(
+            new_params.update(
                 {
                     "ts": ts,
                     "signed_request": self.signed_request,
@@ -576,7 +610,7 @@ class FleetManager:
         else:
             seed = self.world_map_seed
             domain = WORLD_MAP_URL
-            params.update(
+            new_params.update(
                 {
                     "game_signed_request": self.game_signed_request,
                     "map_signed_request": self.map_signed_request,
@@ -586,22 +620,23 @@ class FleetManager:
         if action == 2:
             param_string = self._generate_hash_string(params=payload, action=action)
         else:
-            param_string = self._generate_hash_string(params=params, action=action)
+            param_string = self._generate_hash_string(params=new_params, action=action)
 
         hn = random.randint(0, 9999999)
         h = get_hash(
             seed=seed, params_string=param_string, random_seed=hn, secure=secure
         )
 
+        new_payload = dict(payload)
         if action == 2:
-            payload.update(
+            new_payload.update(
                 {
                     "hn": hn,
                     "h": h,
                 }
             )
         else:
-            params.update(
+            new_params.update(
                 {
                     "hn": hn,
                     "h": h,
@@ -611,20 +646,20 @@ class FleetManager:
         url = f"{domain}/{endpoint}"
 
         if post:
-            if payload:
+            if new_payload:
                 if action == 0 or action == 5:
-                    resp = self.session.post(url, params=params, json=payload)
+                    resp = self.session.post(url, params=new_params, json=new_payload)
                 elif action == 2:
-                    resp = self.session.post(url, params=params, data=payload)
+                    resp = self.session.post(url, params=new_params, data=new_payload)
             else:
-                resp = self.session.post(url, params=params)
+                resp = self.session.post(url, params=new_params)
         elif put:
-            resp = self.session.put(url, params=params, json=payload)
+            resp = self.session.put(url, params=new_params, json=new_payload)
         else:
-            resp = self.session.get(url, params=params)
+            resp = self.session.get(url, params=new_params)
 
-        resp.raise_for_status()
-        return resp.json()
+        resp.raise_for_status()  # pyright: ignore[reportPossiblyUnboundVariable]
+        return resp.json()  # pyright: ignore[reportPossiblyUnboundVariable]
 
     def _distance(self, fleet_id: str, target_x: int, target_y: int):
         """
@@ -658,7 +693,7 @@ class FleetManager:
 
     def _filter_by_distance(
         self,
-        fecthed_targets: dict,
+        fecthed_targets: list[dict[str, int]],
         fleet_id: str,
         level: str,
         max_distance: int,
@@ -675,8 +710,8 @@ class FleetManager:
         Returns:
             targets (list): Target list, sorted in ascending order by distance to the position of the fleet.
         """
-        targets = []
-        for target in fecthed_targets["bookmarks"]:
+        targets: list[tuple[int, int, float, int]] = []
+        for target in fecthed_targets:
             dist = self._distance(
                 fleet_id=fleet_id,
                 target_x=target["x"] * 100,
@@ -688,12 +723,12 @@ class FleetManager:
             if level:
                 # TODO check for ',' in level string, if found do itteration for each level separated by ','
                 if target["level"] == int(level):
-                    targets.append((target["x"], target["y"], dist, target["id"]))
+                    targets.append((target["x"], target["y"], dist, int(target["id"])))
             else:
-                targets.append((target["x"], target["y"], dist, target["id"]))
+                targets.append((target["x"], target["y"], dist, int(target["id"])))
 
         if not targets:
-            return None
+            return False
 
         return sorted(targets, key=lambda target: target[2])
 
@@ -723,7 +758,7 @@ class FleetManager:
         with self.claim_lock:
             self.claimed_targets.discard(target_id)
 
-    def _pick_target(self, targets: list):
+    def _pick_target(self, targets: list[tuple[int, int, float, int]]):
         """
         Picks a target, that is not engaged by other fleets. If no target is available - False.
 
@@ -779,17 +814,16 @@ class FleetManager:
             targets (dict): Target list of player bases, sorted in ascending order by distance from fleet_id.
         """
         endpoint = "api/bm/bookmarks/vengeanceoutsector"
-        payload = {}
         resp = self._make_request(
             endpoint=endpoint,
             params={},
-            payload=payload,
+            payload={},
             post=True,
             put=False,
             secure=True,
             action=2,
         )
-        targets = {"bookmarks": []}
+        targets: dict[str, list[dict[str, int]]] = {"bookmarks": []}
         for target in resp["bookmarks"]:
             if (
                 target["rank"] == "3"
@@ -804,7 +838,7 @@ class FleetManager:
             resp = self._make_request(
                 endpoint=endpoint,
                 params={},
-                payload=payload,
+                payload={},
                 post=True,
                 put=False,
                 secure=True,
@@ -818,7 +852,12 @@ class FleetManager:
                 ):
                     continue
                 targets["bookmarks"].append(target)
-        return self._filter_by_distance(targets, fleet_id, False, 50000)
+        return self._filter_by_distance(
+            fecthed_targets=targets["bookmarks"],
+            fleet_id=fleet_id,
+            level="",
+            max_distance=50000,
+        )
 
     def _get_approach_clock(self, fleet_id: str, target_x: int, target_y: int):
         """
@@ -864,7 +903,7 @@ class FleetManager:
             payload (dict): Dictionary containing fleet and miscellaneous information required for a fleet launch request. If fleet information is not found - False.
         """
         response = self.get_fleets()
-        fleet_payload = {
+        fleet_payload: FleetManager._FleetPayload = {
             "ships": {},
             "launch": "worldmap",
         }
@@ -888,7 +927,7 @@ class FleetManager:
         for k, v in response.items():
             if k == "fleets":
                 for fleet in v:
-                    fleet_payload = {
+                    fleet_payload: FleetManager._FleetPayload = {
                         "ships": {},
                     }
                     for ship in fleet["ships"]:
@@ -941,7 +980,7 @@ class FleetManager:
         if combat_guid is not None:
             engage_id = resp.get("objects")[0].get("actions")[0][1]
             server_url = resp.get("objects")[0].get("actions")[0][3]
-            return str(combat_guid), int(engage_id), server_url
+            return str(combat_guid), int(engage_id), str(server_url)
         return None, None, None
 
     def _update_position(self, fleet_id: str, x: int, y: int):
@@ -988,9 +1027,9 @@ class FleetManager:
             endpoint = f"dock/base/fleets/{gs_fleet_id}"
         else:
             endpoint = f"dock/base/fleets/{fleet_id}"
-        payload = {"ships": {}}
 
-        for flp in self.ship_ids.get(fleet_id).get("ships").keys():
+        payload: FleetManager._FleetPayload = {"ships": {}}
+        for flp in self.ship_ids.get(fleet_id, {}).get("ships", {}).keys():
             if flp not in fleet_layout:
                 payload["ships"][flp] = {"id": None}
             else:
@@ -1028,7 +1067,7 @@ class FleetManager:
             resp (dict): Response data in json format.
         """
         endpoint = "base/transitions"
-        payload = {
+        payload: dict[str, list[str | dict[str, str | int | dict[str, int]]]] = {
             "instanceids": [instance_id],
             "transitions": [
                 {
@@ -1074,7 +1113,7 @@ class FleetManager:
             base_repair (bool): Should fleet be repaired after an engagement.
 
         """
-        level_template = []
+        level_template: list[tuple[bytes, float]] = []
         with open(level, "r") as f:
             for line in f.readlines():
                 cmd_hex, delay_str = line.split(maxsplit=2)
@@ -1085,7 +1124,8 @@ class FleetManager:
         combat_guid, engage_id, server_url = self._fleet_in_combat(
             fleet_id=fleet_id, map_speed=map_speed
         )
-
+        if combat_guid is None or engage_id is None or server_url is None:
+            return print("Fleet is not engaged")
         websocket = self.start_engagement(
             combat_guid=combat_guid,
             engage_id=engage_id,
@@ -1093,25 +1133,25 @@ class FleetManager:
             server_url=server_url,
             return_ws=True,
         )
+        if websocket is not None:
+            battle_end_event = threading.Event()
+            hb_thread = threading.Thread(
+                target=self._handle_heartbeat,
+                args=(websocket, battle_end_event),
+                daemon=True,
+            )
+            hb_thread.start()
 
-        battle_end_event = threading.Event()
-        hb_thread = threading.Thread(
-            target=self._handle_heartbeat,
-            args=(websocket, battle_end_event),
-            daemon=True,
-        )
-        hb_thread.start()
+            for cmd, delay in level_template:
+                websocket.send_binary(cmd)
+                time.sleep(delay)
 
-        for cmd, delay in level_template:
-            websocket.send_binary(cmd)
-            time.sleep(delay)
+            while not battle_end_event.is_set() and websocket.connected:
+                time.sleep(1)
 
-        while not battle_end_event.is_set() and websocket.connected:
-            time.sleep(1)
-
-        hb_thread.join(timeout=2)
-        if websocket.connected:
-            websocket.close()
+            hb_thread.join(timeout=2)
+            if websocket.connected:
+                websocket.close()
 
         if base_repair:
             self.move(
@@ -1144,7 +1184,9 @@ class FleetManager:
                 engage_radius=300,
             )
 
-    def _handle_heartbeat(self, websocket, battle_end_event):
+    def _handle_heartbeat(
+        self, websocket: websocket.WebSocket, battle_end_event: threading.Event
+    ):
         """
         Checks for heartbeat messages from the server, when a message is received a response is sent back.
 
@@ -1179,7 +1221,7 @@ class FleetManager:
             pass
             # print("Heartbeat thread stopped")
 
-    def _ws_handshake(self, combat_guid: str, engage_id: int, user_id: int) -> str:
+    def _ws_handshake(self, combat_guid: str, engage_id: int, user_id: int):
         """
         Generate a handshake to use when establishing a websocket connection to the server handling a fleet engagement.
 
@@ -1223,7 +1265,7 @@ class FleetManager:
         Returns:
             ws (websocket): Websocket object.
         """
-        ws = websocket.create_connection(
+        ws = websocket.create_connection(  # pyright: ignore[reportUnknownMemberType]
             "wss://" + server_url + ":3443",
             header=[
                 "Origin: {BASE_URL}",
@@ -1295,7 +1337,7 @@ class FleetManager:
             resp (dict): Response data in json format.
         """
         endpoint = "dock/base/repair/default"
-        payload = {
+        payload: Mapping[str, str | int] = {
             "fleet": fleet_id,
             "seconds": 300,
             "purchase_type": "free",
@@ -1346,6 +1388,9 @@ class FleetManager:
 
         endpoint = f"dock/base/fleets/{fleet_id}"
         payload = self._pre_launch_payload(fleet_id)
+        if not payload:
+            print("Couldn't fetch fleet information")
+            return "Couldn't fetch fleet information"
         resp = self._make_request(
             endpoint=endpoint,
             params={},
@@ -1413,7 +1458,7 @@ class FleetManager:
 
         self._update_position(fleet_id=fleet_id, x=x, y=y)
         endpoint = "updateMapObjects2.php"
-        params = {
+        params: dict[str, str | int] = {
             "actions": action_string,
             "id": self.map_ids[fleet_id],
             "worldindex": self.world_index,
@@ -1508,7 +1553,7 @@ class FleetManager:
         """
         self.launch(fleet_id=fleet_id)
         time.sleep(1)
-        level_template = []
+        level_template: list[tuple[bytes, float]] = []
         if target_template:
             with open(target_template, "r") as f:
                 for line in f.readlines():
@@ -1517,10 +1562,11 @@ class FleetManager:
                     delay = float(delay_str)
                     level_template.append((cmd_bytes, delay))
         while time.time() < timeout:
+            fecthed_targets = self._fetch_locator_targets(
+                level=level, types=types, minHealth=minHealth
+            )
             targets = self._filter_by_distance(
-                fecthed_targets=self._fetch_locator_targets(
-                    level=level, types=types, minHealth=minHealth
-                ),
+                fecthed_targets=fecthed_targets["bookmarks"],
                 fleet_id=fleet_id,
                 level=level,
                 max_distance=50000,
@@ -1532,6 +1578,11 @@ class FleetManager:
                 continue
 
             target = self._pick_target(targets=targets)
+
+            if not target:
+                print(f"[Fleet-{fleet_id}] Could not targets, that are not engaged")
+                time.sleep(60)
+                continue
 
             try:
                 self.move(
@@ -1561,24 +1612,25 @@ class FleetManager:
                             return_ws=True,
                         )
 
-                        battle_end_event = threading.Event()
-                        hb_thread = threading.Thread(
-                            target=self._handle_heartbeat,
-                            args=(websocket, battle_end_event),
-                            daemon=True,
-                        )
-                        hb_thread.start()
+                        if websocket is not None:
+                            battle_end_event = threading.Event()
+                            hb_thread = threading.Thread(
+                                target=self._handle_heartbeat,
+                                args=(websocket, battle_end_event),
+                                daemon=True,
+                            )
+                            hb_thread.start()
 
-                        for cmd, delay in level_template:
-                            websocket.send_binary(cmd)
-                            time.sleep(delay)
+                            for cmd, delay in level_template:
+                                websocket.send_binary(cmd)
+                                time.sleep(delay)
 
-                        while not battle_end_event.is_set() and websocket.connected:
-                            time.sleep(1)
+                            while not battle_end_event.is_set() and websocket.connected:
+                                time.sleep(1)
 
-                        hb_thread.join(timeout=2)
-                        if websocket.connected:
-                            websocket.close()
+                            hb_thread.join(timeout=2)
+                            if websocket.connected:
+                                websocket.close()
                     else:
                         self.start_engagement(
                             combat_guid=combat_guid,
@@ -1643,24 +1695,31 @@ class FleetManager:
         time.sleep(3)
 
 
-def test_entrace(fleet_id: str, map_speed: float, level: int, types: int, clock: int):
+def test_entrace(fleet_id: str, map_speed: float, level: str, types: str, clock: int):
     """
     Send out a fleet to a target, at a set clock, relative to the target center.
 
     Args:
         fleet_id (str): Id of the fleet.
         map_speed (float): Map speed of the fleet.
-        level (int): Target level.
-        types (int): Target type.
+        level (str): Target level.
+        types (str): Target type.
         clock (int): Entrance relative to the target.
     """
     fm.launch(fleet_id=fleet_id)
     targets = fm._filter_by_distance(
-        fecthed_targets=fm._fetch_locator_targets(level=level, types=types),
+        fecthed_targets=fm._fetch_locator_targets(
+            level=level, types=types, minHealth="100"
+        ),
         fleet_id=fleet_id,
         level=level,
+        max_distance=20000,
     )
+    if not targets:
+        return print(f"No targets close by found")
     target = fm._pick_target(targets=targets)
+    if not target:
+        return print(f"Target {types} {level} not found")
     fm.move(
         fleet_id=fleet_id,
         x=target[0] * 100,
@@ -1693,7 +1752,7 @@ def crew_scenario():
         ).start()
         time.sleep(10)
 
-    cm._set_defaults(40)
+    cm.set_defaults(40)
     for i in range(40):
         threading.Thread(
             target=cm.fill_crews,
@@ -1706,7 +1765,7 @@ def crew_scenario():
         time.sleep(60)
 
 
-def camp_scenario(campaign_levels: list):
+def camp_scenario(campaign_levels: list[str]):
     """
     Experimental.
     Function accepts level templates for a campaign to be completed by fleet 1, the campaign must be started and a battle has to be engaged by the user.

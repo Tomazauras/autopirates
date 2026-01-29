@@ -3,12 +3,15 @@ seeds = {
     "base": "",
 }
 
-configs_main = {
+user = {
     "userid": 0,
     "baseid": 0,
     "base_x": 0,
     "base_y": 0,
     "world_index": 0,
+}
+
+cookies = {
     "phpsessid": "",
     "signed_request": "",
     "game_signed_request": "",

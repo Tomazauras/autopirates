@@ -22,7 +22,7 @@ seeds = {
     "base": "",
 }
 
-configs_main = {
+user = {
     # Set once ↓
     "userid": 0,
     "baseid": 0,
@@ -30,12 +30,16 @@ configs_main = {
     "base_x": 0,
     "base_y": 0,
     "world_index": 0,
+}
+
+cookies = {
     # Reset after every game refresh ↓
     "phpsessid": "",
     "signed_request": "",
     "game_signed_request": "",
     "map_signed_request": "",
 }
+
 ```
 
 To populate **_world_index_**, **_map_signed_request_** variables:
@@ -45,8 +49,9 @@ To populate **_world_index_**, **_map_signed_request_** variables:
 3. Select a fleet and move it.
 4. Look for request **_updateMapObjects2_** in network logs.
 5. Inside the request url you will find the 2 variables.
+6. **world_index** can be found in request payload.
 
-To populate the other **_configs_main_** variables:
+To populate the other **cookies** variables:
 
 1. Go to worldmap and launch a fleet.
 2. Inspect element the page, navigate to network tab and start recording traffic.
@@ -54,7 +59,7 @@ To populate the other **_configs_main_** variables:
 4. Look for request **_api/bm/base/load?_** in network logs.
 5. Inside the request url you will find **_signed_request_**, **_game_signed_request_** variables.
 6. In response headers, under "_set-cookie_" you will find **_PHPSESSID_**.
-7. The rest of the variables can be found in the request response.
+7. The rest of the variables can be found in the request response data.
 
 To populate **_seeds_** variables:
 

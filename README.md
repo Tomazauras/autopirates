@@ -22,6 +22,7 @@ seeds = {
     "base": "",
 }
 
+# Is set automatically by default at start of execution, can be set manually if you wish so
 user = {
     # Set once ↓
     "userid": 0,
@@ -42,16 +43,16 @@ cookies = {
 
 ```
 
-To populate **_world_index_**, **_map_signed_request_** variables:
+To populate **_map_signed_request_** variable:
 
 1. Go to worldmap and launch a fleet.
 2. Inspect element the page, navigate to network tab and start recording traffic.
 3. Select a fleet and move it.
 4. Look for request **_updateMapObjects2_** in network logs.
-5. Inside the request url you will find the 2 variables.
-6. **world_index** can be found in request payload.
+5. Inside the request url you will find the variable.
+6. **_world_index_** can be found in request payload.
 
-To populate the other **cookies** variables:
+To populate the other **_cookies_** variables:
 
 1. Go to worldmap and launch a fleet.
 2. Inspect element the page, navigate to network tab and start recording traffic.
@@ -61,7 +62,7 @@ To populate the other **cookies** variables:
 6. In response headers, under "_set-cookie_" you will find **_PHPSESSID_**.
 7. The rest of the variables can be found in the request response data.
 
-To populate **_seeds_** variables:
+To populate **_seeds_** and other **_user_** variables:
 
 8. Find the requests "_call stack_" / "_initiators_" section.
 9. Look for a call stack that has/starts with "_.dispatchRequest_", it should point to a line of code "_BattlePirates.js:xxx_", "xxx" - line. Go to that line of code. Inside the function look for "**null != n ? n : "111aaaaaaa11a1a1a11a1a1a1a1a11a1"**". The long string of numbers and letter will be the **_world_** variable inside of **_seeds_**. In this case it's "111aaaaaaa11a1a1a11a1a1a1a1a11a1".

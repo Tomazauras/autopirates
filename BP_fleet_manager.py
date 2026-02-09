@@ -18,42 +18,148 @@ WORLD_MAP_URL = config.links["world_map_url"]
 LOG_FOLDER = os.getcwd() + "/logs"
 
 
-def get_salt(seed: str):
-    d: list[str] = []
-    for i in range(len(seed) - 1, -1, -1):
-        c = 90 - ord(seed[i]) + 97
-        if c == 139:
-            c -= 91
-        elif c >= 130:
-            c -= 81
-        d.insert(0, chr(c))
-    return "".join(d)
+class SessionManager:
+    # TODO, have the CrewManager and FleetManager make requests through SessionManager.
+    def __init__(self):
+        """
+        SessionManager constructor
+        """
+        try:
+            self.session = requests.Session()
+            self.session.headers.update(self._get_headers())
+        except:
+            print("Failed to initialize session with game server")
+            exit()
 
+        self.game_signed_request = config.cookies["game_signed_request"]
+        self.signed_request = config.cookies["signed_request"]
+        self.seed = config.seeds["base"]
+        try:
+            for k in config.user.keys():
+                if not config.user[k]:
+                    self._set_user_config()
+                    break
+        except:
+            print("Failed to set user data")
+            exit()
 
-def get_num(n: int):
-    return (n % 11) * n
+    def _get_salt(self, seed: str):
+        d: list[str] = []
+        for i in range(len(seed) - 1, -1, -1):
+            c = 90 - ord(seed[i]) + 97
+            if c == 139:
+                c -= 91
+            elif c >= 130:
+                c -= 81
+            d.insert(0, chr(c))
+        return "".join(d)
 
+    def _get_num(self, n: int):
+        return (n % 11) * n
 
-def get_hash(seed: str, params_string: str, random_seed: int, secure: bool):
-    num = get_num(n=random_seed)
-    if secure:
-        salt = get_salt(seed=seed)
-        raw = salt + params_string + str(num)
-    else:
-        raw = params_string + str(num)
+    def get_hash(self, seed: str, params_string: str, random_seed: int, secure: bool):
+        num = self._get_num(n=random_seed)
+        if secure:
+            salt = self._get_salt(seed=seed)
+            raw = salt + params_string + str(num)
+        else:
+            raw = params_string + str(num)
 
-    return hashlib.md5(raw.encode()).hexdigest()
+        return hashlib.md5(raw.encode()).hexdigest()
 
+    def _get_headers(self):
+        return {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36",
+            "Accept": "*/*",
+            "Connection": "keep-alive",
+            "Origin": BASE_URL,
+            "Referer": f"{BASE_URL}/canvas",
+            "Cookie": f'PHPSESSID={config.cookies["phpsessid"]}',
+        }
 
-def _get_headers():
-    return {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36",
-        "Accept": "*/*",
-        "Connection": "keep-alive",
-        "Origin": BASE_URL,
-        "Referer": f"{BASE_URL}/canvas",
-        "Cookie": f'PHPSESSID={config.cookies["phpsessid"]}',
-    }
+    def make_request(
+        self,
+        endpoint: str,
+        params: Mapping[str, str | int | float],
+        payload: Mapping[str, str | int],
+        secure: bool,
+    ):
+
+        new_params = dict(params)
+        new_payload = dict(payload)
+        ts = int(time.time())
+
+        seed = self.seed
+        domain = BASE_URL
+        new_params.update(
+            {
+                "ts": ts,
+                "signed_request": self.signed_request,
+                "game_signed_request": self.game_signed_request,
+                "PHPSESSID": "null",
+                "flashsession": "null",
+            }
+        )
+        param_string = f"" + str(new_payload["baseid"]) + str(new_payload["type"])
+        hn = random.randint(0, 9999999)
+        h = self.get_hash(
+            seed=seed, params_string=param_string, random_seed=hn, secure=secure
+        )
+
+        new_payload.update(
+            {
+                "hn": hn,
+                "h": h,
+            }
+        )
+
+        url = f"{domain}/{endpoint}"
+
+        resp = self.session.post(url, params=new_params, data=new_payload)
+
+        resp.raise_for_status()
+        return resp.json()
+
+    def _set_user_config(self):
+        """
+        Populates the user dictionary imported from config.py
+        """
+        endpoint = "api/bm/base/load"
+        payload: dict[str, int | str] = {
+            "baseid": 0,
+            "type": "build",
+        }
+        resp = self.make_request(
+            endpoint=endpoint,
+            params={},
+            payload=payload,
+            secure=True,
+        )
+        if resp["error"] == 0:
+            world = -2
+            if int(resp["basex"]) < 1200000:
+                world = -1
+            elif int(resp["basex"]) < 2400000:
+                world = 0
+            elif int(resp["basex"]) < 3600000:
+                world = 1
+            elif int(resp["basex"]) < 4800000:
+                world = 2
+            else:
+                world = 3
+
+            config.user.update(
+                {
+                    "userid": resp["userid"],
+                    "baseid": resp["baseid"],
+                    "base_x": resp["basex"],
+                    "base_y": resp["basey"],
+                    "world_index": world,
+                }
+            )
+            return resp
+        else:
+            print(f"Request failed {resp["error"]}")
 
 
 class CrewManager:
@@ -65,14 +171,14 @@ class CrewManager:
     self.whitelist - A list of crew type ids to look up, when deciding which crews to accept during a roll session. Can be set in "config.py"
     """
 
-    def __init__(self, session: requests.Session):
+    def __init__(self, session_manager: SessionManager):
         """
         CrewManager constructor
 
         Args:
-            session (session): The session object. Used for interacting with the game server.
+            session_manager (SessionManager): The sessionManager object. Used for interacting with the game server.
         """
-        self.session = session
+        self.session_manager = session_manager
         self.userid = config.user["userid"]
         self.seed = config.seeds["base"]
         self.game_signed_request = config.cookies["game_signed_request"]
@@ -85,7 +191,7 @@ class CrewManager:
         self.uranium_storage = 0
         self.uranium_limit = 1000
         self.remaining_slots = 0
-        self.crew_storage: list[dict[str, str]] = []
+        self.crew_storage: list[CrewManager.Crew] = []
         self._set_crews()
         self._set_uranium()
 
@@ -96,6 +202,17 @@ class CrewManager:
         self.delete_last_roll: defaultdict[int, bool] = defaultdict(bool)
 
         self.roll_history: dict[int, dict[int, int]] = {}
+
+    class Crew(TypedDict):
+        accepted_at: str
+        creation_started_at: str
+        crew_id: str
+        equipment_started_at: str
+        expiration_time: str
+        extensions: str
+        fleet_id: str
+        id: str
+        userid: str
 
     def _generate_hash_string(self, params: Mapping[str, str | int], action: int):
         """
@@ -159,7 +276,7 @@ class CrewManager:
         ts = int(time.time())
         param_string = self._generate_hash_string(params=new_payload, action=action)
         hn = random.randint(0, 9999999)
-        h = get_hash(
+        h = self.session_manager.get_hash(
             seed=self.seed, params_string=param_string, random_seed=hn, secure=True
         )
         new_params.update(
@@ -176,9 +293,11 @@ class CrewManager:
 
         url = f"{BASE_URL}/{endpoint}"
         if post:
-            resp = self.session.post(url, params=new_params, data=new_payload)
+            resp = self.session_manager.session.post(
+                url, params=new_params, data=new_payload
+            )
         else:
-            resp = self.session.get(url, params=new_params)
+            resp = self.session_manager.session.get(url, params=new_params)
 
         resp.raise_for_status()
         return resp.json()
@@ -209,7 +328,7 @@ class CrewManager:
         resp = self._make_request(
             endpoint=endpoint, params={}, payload={}, post=True, action=5
         )
-        self.remaining_slots = resp["remainingSlots"]
+        self.remaining_slots: int = resp["remainingSlots"]
         self.crew_storage = resp["items"]
         return resp
 
@@ -276,7 +395,7 @@ class CrewManager:
             endpoint=endpoint, params={}, payload=payload, post=True, action=3
         )
 
-    def _assign_crew(self, long_crew_id: int, fleet_id: str):
+    def assign_crew(self, long_crew_id: int, fleet_id: str):
         """
         Send a request to game server, to assign a crew to a fleet.
 
@@ -309,7 +428,7 @@ class CrewManager:
             self.claimed_crews.add(long_crew_id)
             return True
 
-    def _release_crew(self, crew: dict[str, str]):
+    def release_crew(self, crew: CrewManager.Crew):
         """
         ***Thread-locked***. Releases a crew by calling self._delete_crew, updates crew storage.
 
@@ -321,7 +440,7 @@ class CrewManager:
             self.crew_storage.remove(crew)
             self._delete_crew(int(crew["id"]))
 
-    def _pick_crew(self, crew_id: int):
+    def pick_crew(self, crew_id: int):
         """
         Picks a crew from crew storage, that is not in-use and is of type crew_id.
 
@@ -370,7 +489,7 @@ class CrewManager:
         resp = self._accept_crew(transaction_id=transaction_id)
         return resp["item"]["crew_id"], resp["item"]["id"]
 
-    def _print_status(self):
+    def print_status(self):
         """
         Print information about the current crew roll session.
         """
@@ -455,14 +574,14 @@ class FleetManager:
     A class used for fleet interactions inside the game. Managing fleet composition, repairing, launching, moving, engaging a target.
     """
 
-    def __init__(self, session: requests.Session):
+    def __init__(self, session_manager: SessionManager):
         """
         FleetManager constructor
 
         Args:
-            session (session): The session object. Used for interacting with the game server.
+            session_manager (SessionManager): The sessionManager object. Used for interacting with the game server.
         """
-        self.session = session
+        self.session_manager = session_manager
         self.seed = config.seeds["base"]
         self.world_map_seed = config.seeds["world"]
         self.game_signed_request = config.cookies["game_signed_request"]
@@ -475,7 +594,7 @@ class FleetManager:
         self.base_y = config.user["base_y"]
 
         self.map_ids: dict[str, int] = {}
-        self.ship_ids: FleetManager._FleetPayload
+        self.ship_ids: dict[str, FleetManager.FleetPayload] = {}
         self._get_ship_ids()
         self.claimed_targets: set[int] = set()
         self.claim_lock = threading.Lock()
@@ -498,17 +617,17 @@ class FleetManager:
             10: (-1, 0.33),
             11: (-1, -0.33),
         }
-        self._clock_unit: dict[int, tuple[float, float]] = {}
+        self.clock_unit: dict[int, tuple[float, float]] = {}
         for h, (cx, cy) in self.clock_map.items():
             m = math.hypot(cx, cy) or 1.0
-            self._clock_unit[h] = (cx / m, cy / m)
+            self.clock_unit[h] = (cx / m, cy / m)
 
-    class _Ship(TypedDict):
+    class Ship(TypedDict):
         id: int | None
         dock: NotRequired[str]
 
-    class _FleetPayload(TypedDict):
-        ships: dict[str, FleetManager._Ship]
+    class FleetPayload(TypedDict):
+        ships: dict[str, FleetManager.Ship]
         launch: NotRequired[str]
 
     def _generate_hash_string(
@@ -518,7 +637,7 @@ class FleetManager:
                 str,
                 str | int | float | list[str | dict[str, str | int | dict[str, int]]],
             ]
-            | FleetManager._FleetPayload
+            | FleetManager.FleetPayload
         ),
         action: int,
     ):
@@ -562,7 +681,7 @@ class FleetManager:
                 str,
                 str | int | list[str | dict[str, str | int | dict[str, int]]],
             ]
-            | FleetManager._FleetPayload
+            | FleetManager.FleetPayload
         ),
         post: bool,
         put: bool,
@@ -623,7 +742,7 @@ class FleetManager:
             param_string = self._generate_hash_string(params=new_params, action=action)
 
         hn = random.randint(0, 9999999)
-        h = get_hash(
+        h = self.session_manager.get_hash(
             seed=seed, params_string=param_string, random_seed=hn, secure=secure
         )
 
@@ -648,15 +767,21 @@ class FleetManager:
         if post:
             if new_payload:
                 if action == 0 or action == 5:
-                    resp = self.session.post(url, params=new_params, json=new_payload)
+                    resp = self.session_manager.session.post(
+                        url, params=new_params, json=new_payload
+                    )
                 elif action == 2:
-                    resp = self.session.post(url, params=new_params, data=new_payload)
+                    resp = self.session_manager.session.post(
+                        url, params=new_params, data=new_payload
+                    )
             else:
-                resp = self.session.post(url, params=new_params)
+                resp = self.session_manager.session.post(url, params=new_params)
         elif put:
-            resp = self.session.put(url, params=new_params, json=new_payload)
+            resp = self.session_manager.session.put(
+                url, params=new_params, json=new_payload
+            )
         else:
-            resp = self.session.get(url, params=new_params)
+            resp = self.session_manager.session.get(url, params=new_params)
 
         resp.raise_for_status()  # pyright: ignore[reportPossiblyUnboundVariable]
         return resp.json()  # pyright: ignore[reportPossiblyUnboundVariable]
@@ -885,7 +1010,7 @@ class FleetManager:
         # Pick the clock whose unit vector has the largest dot product with (ux,uy)
         best_h = 12
         best_dot = -1.0
-        for h, (cx, cy) in self._clock_unit.items():
+        for h, (cx, cy) in self.clock_unit.items():
             dot = ux * cx + uy * cy
             if dot > best_dot:
                 best_dot = dot
@@ -903,7 +1028,7 @@ class FleetManager:
             payload (dict): Dictionary containing fleet and miscellaneous information required for a fleet launch request. If fleet information is not found - False.
         """
         response = self.get_fleets()
-        fleet_payload: FleetManager._FleetPayload = {
+        fleet_payload: FleetManager.FleetPayload = {
             "ships": {},
             "launch": "worldmap",
         }
@@ -927,7 +1052,7 @@ class FleetManager:
         for k, v in response.items():
             if k == "fleets":
                 for fleet in v:
-                    fleet_payload: FleetManager._FleetPayload = {
+                    fleet_payload: FleetManager.FleetPayload = {
                         "ships": {},
                     }
                     for ship in fleet["ships"]:
@@ -935,7 +1060,7 @@ class FleetManager:
                             "id": int(ship["actives"]["id"]),
                             "dock": "base",
                         }
-                    if not self.ship_ids[fleet["id"]]:
+                    if not self.ship_ids.get(fleet["id"], False):
                         self.ship_ids[fleet["id"]] = fleet_payload
 
     def _fleet_docked(self, fleet_id: str):
@@ -955,7 +1080,7 @@ class FleetManager:
                     if fleet["id"] == fleet_id:
                         if fleet["is_on_map"]:
                             self.map_ids[fleet["id"]] = fleet["mapId"]
-                        return fleet["is_on_map"] == False
+                        return not fleet["is_on_map"]
 
     def _fleet_in_combat(self, fleet_id: str, map_speed: float):
         """
@@ -1028,7 +1153,7 @@ class FleetManager:
         else:
             endpoint = f"dock/base/fleets/{fleet_id}"
 
-        payload: FleetManager._FleetPayload = {"ships": {}}
+        payload: FleetManager.FleetPayload = {"ships": {}}
         for flp in self.ship_ids.get(fleet_id, {}).get("ships", {}).keys():
             if flp not in fleet_layout:
                 payload["ships"][flp] = {"id": None}
@@ -1097,7 +1222,6 @@ class FleetManager:
         level: str,
         fleet_id: str,
         gs_fleet_id: str,
-        ship_count: int,
         map_speed: float,
         base_repair: bool,
     ):
@@ -1108,7 +1232,6 @@ class FleetManager:
             level (str): Target levels.
             fleet_id (str): Fleet id. ("1"...."15").
             gs_fleet_id (str): Fleet id which has a half-repair crew assigned to it. ("1"...."15").
-            ship_count (int): Amount of ships in the fleet.
             map_speed (float): Fleet map speed.
             base_repair (bool): Should fleet be repaired after an engagement.
 
@@ -1167,7 +1290,6 @@ class FleetManager:
                 self.lazy_repair(
                     fleet_id=fleet_id,
                     gs_fleet_id=gs_fleet_id,
-                    ship_count=ship_count,
                 )
 
             time.sleep(1)
@@ -1474,19 +1596,20 @@ class FleetManager:
             base="web",
         )
 
-    def lazy_repair(self, fleet_id: str, gs_fleet_id: str, ship_count: int):
+    def lazy_repair(self, fleet_id: str, gs_fleet_id: str):
         """
         Complete the workflow of repairing a fleet.
 
         Args:
             fleet_id (str): Fleet id. ("1"...."15").
             gs_fleet_id (str): Fleet id which has a half-repair crew assigned to it. ("1"...."15").
-            ship_count (int): Amount of ships in the fleet.
 
         """
         if not self._fleet_docked(fleet_id=fleet_id):
             print("Send fleet to dock first")
             time.sleep(25)
+
+        ship_count = self.ship_ids.get(fleet_id, {}).get("ships", {}).__len__()
 
         if ship_count > 1 or fleet_id != gs_fleet_id:
             self._manage_fleet(fleet_id=fleet_id)
@@ -1530,7 +1653,6 @@ class FleetManager:
         timeout: float,
         clock: int = 12,
         map_speed: float = 443.5,
-        ship_count: int = 5,
         target_template: str = "",
         base_repair: bool = False,
     ):
@@ -1546,7 +1668,6 @@ class FleetManager:
             timeout (float): time offset from current timestamp.
             clock (int): Engage target from o'clock.
             map_speed (float): Fleet map speed.
-            ship_count (int): Amount of ships in the fleet.
             target_template (str): Path to a user-defined target template to follow.
             base_repair (bool): Should fleet be repaired after an engagement.
 
@@ -1671,18 +1792,17 @@ class FleetManager:
                         map_speed=map_speed,
                     )
                 )
-                time.sleep(1)
+                time.sleep(3)
 
                 with self.repair_lock:
                     self.lazy_repair(
                         fleet_id=fleet_id,
                         gs_fleet_id=gs_fleet_id,
-                        ship_count=ship_count,
                     )
 
                 time.sleep(1)
                 self.launch(fleet_id=fleet_id)
-                time.sleep(1)
+                time.sleep(2)
 
         time.sleep(1)
         self.move(
@@ -1707,8 +1827,8 @@ def test_entrace(fleet_id: str, map_speed: float, level: str, types: str, clock:
         clock (int): Entrance relative to the target.
     """
     fm.launch(fleet_id=fleet_id)
-    targets = fm._filter_by_distance(
-        fecthed_targets=fm._fetch_locator_targets(
+    targets = fm._filter_by_distance(  # pyright: ignore[reportPrivateUsage]
+        fecthed_targets=fm._fetch_locator_targets(  # pyright: ignore[reportPrivateUsage]
             level=level, types=types, minHealth="100"
         ),
         fleet_id=fleet_id,
@@ -1717,7 +1837,7 @@ def test_entrace(fleet_id: str, map_speed: float, level: str, types: str, clock:
     )
     if not targets:
         return print(f"No targets close by found")
-    target = fm._pick_target(targets=targets)
+    target = fm._pick_target(targets=targets)  # pyright: ignore[reportPrivateUsage]
     if not target:
         return print(f"Target {types} {level} not found")
     fm.move(
@@ -1761,7 +1881,7 @@ def crew_scenario():
         time.sleep(1)
 
     while time.time() < tout:
-        cm._print_status()
+        cm.print_status()
         time.sleep(60)
 
 
@@ -1798,11 +1918,10 @@ def camp_scenario(campaign_levels: list[str]):
                 if _.strip() == "0":
                     print(f"Skiping Lvl-{level}")
                     continue
-                fm._start_campaign_encounter(
+                fm._start_campaign_encounter(  # pyright: ignore[reportPrivateUsage]
                     level=level,
                     fleet_id="1",
                     gs_fleet_id="1",
-                    ship_count=1,
                     map_speed=406,
                     base_repair=False,
                 )
@@ -1810,11 +1929,10 @@ def camp_scenario(campaign_levels: list[str]):
 
 if __name__ == "__main__":
     try:
-        SESSION = requests.Session()
-        SESSION.headers.update(_get_headers())
-        with SESSION:
-            cm = CrewManager(session=SESSION)
-            fm = FleetManager(session=SESSION)
+        sm = SessionManager()
+        with sm.session:
+            cm = CrewManager(session_manager=sm)
+            fm = FleetManager(session_manager=sm)
 
             # Scenario can be created by calling the respective manager functions..
 

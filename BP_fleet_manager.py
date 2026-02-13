@@ -152,8 +152,8 @@ class SessionManager:
                 {
                     "userid": resp["userid"],
                     "baseid": resp["baseid"],
-                    "base_x": resp["basex"],
-                    "base_y": resp["basey"],
+                    "base_x": int(resp["basex"]),
+                    "base_y": int(resp["basey"]),
                     "world_index": world,
                 }
             )
@@ -1101,6 +1101,9 @@ class FleetManager:
             map_speed=map_speed,
             in_combat_check=True,
         )
+        if not resp.get("objects", False)[0]:
+            # If Target is intercepted by another player or the response is not ok
+            return None, None, None
         combat_guid = resp.get("objects")[0].get("data").get("combat_guid", None)
         if combat_guid is not None:
             engage_id = resp.get("objects")[0].get("actions")[0][1]
@@ -1827,13 +1830,14 @@ def test_entrace(fleet_id: str, map_speed: float, level: str, types: str, clock:
         clock (int): Entrance relative to the target.
     """
     fm.launch(fleet_id=fleet_id)
+    fecthed_targets = fm._fetch_locator_targets(  # pyright: ignore[reportPrivateUsage]
+        level=level, types=types, minHealth="100"
+    )
     targets = fm._filter_by_distance(  # pyright: ignore[reportPrivateUsage]
-        fecthed_targets=fm._fetch_locator_targets(  # pyright: ignore[reportPrivateUsage]
-            level=level, types=types, minHealth="100"
-        ),
+        fecthed_targets=fecthed_targets["bookmarks"],
         fleet_id=fleet_id,
         level=level,
-        max_distance=20000,
+        max_distance=50000,
     )
     if not targets:
         return print(f"No targets close by found")
@@ -1857,20 +1861,31 @@ def crew_scenario():
     """
     Sends out fleets [1-5] to hunt uranium targets, each containing a single ship that can destroy the uranium target. Once all fleets are sent out, 20 Threads are inniated to roll for crews.
     """
-    tout = time.time() + 60 * 30
+    tout = time.time() + 60 * 10
     for i in range(1, 6):
         threading.Thread(
             target=fm.hunt_targets,
-            args=(str(i), str(i), 13, 343, tout, 12, 443.5, 1, False, False),
+            args=(str(i), str(i), "13", "343", "1", tout, 12, 443.5, False, False),
         ).start()
         time.sleep(15)
 
     for i in range(6, 8):
         threading.Thread(
             target=fm.hunt_targets,
-            args=(str(i), str(i), 13, 343, tout, 12, 406, 1, False, False),
+            args=(
+                str(i),
+                str(i),
+                "13",
+                "343",
+                "1",
+                tout,
+                12,
+                406.25,
+                False,
+                False,
+            ),
         ).start()
-        time.sleep(10)
+        time.sleep(5)
 
     cm.set_defaults(40)
     for i in range(40):

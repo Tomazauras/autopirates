@@ -124,7 +124,7 @@ class SessionManager:
         """
         Populates the user dictionary imported from config.py
         """
-        endpoint = "api/bm/base/load"
+        endpoint = config.links["base_load"]
         payload: dict[str, int | str] = {
             "baseid": 0,
             "type": "build",
@@ -910,7 +910,7 @@ class FleetManager:
         Returns:
             resp (dict): Response data in json format.
         """
-        endpoint = "api/bm/bookmarks/npctargets"
+        endpoint = config.links["npctargets"]
         payload = {
             "count": "100",
             "levels": level,
@@ -938,7 +938,7 @@ class FleetManager:
         Returns:
             targets (dict): Target list of player bases, sorted in ascending order by distance from fleet_id.
         """
-        endpoint = "api/bm/bookmarks/vengeanceoutsector"
+        endpoint = config.links["vengeanceoutsector"]
         resp = self._make_request(
             endpoint=endpoint,
             params={},
@@ -959,7 +959,7 @@ class FleetManager:
             targets["bookmarks"].append(target)
 
         if in_sector:
-            endpoint = "api/bm/bookmarks/vengeanceinsector"
+            endpoint = config.links["vengeanceinsector"]
             resp = self._make_request(
                 endpoint=endpoint,
                 params={},
@@ -1152,9 +1152,9 @@ class FleetManager:
             resp (dict): Response data in json format.
         """
         if gs_fleet_id:
-            endpoint = f"dock/base/fleets/{gs_fleet_id}"
+            endpoint = config.links["dock"] + f"/{gs_fleet_id}"
         else:
-            endpoint = f"dock/base/fleets/{fleet_id}"
+            endpoint = config.links["dock"] + f"/{fleet_id}"
 
         payload: FleetManager.FleetPayload = {"ships": {}}
         for flp in self.ship_ids.get(fleet_id, {}).get("ships", {}).keys():
@@ -1194,7 +1194,7 @@ class FleetManager:
         Returns:
             resp (dict): Response data in json format.
         """
-        endpoint = "base/transitions"
+        endpoint = config.links["fuse"]
         payload: dict[str, list[str | dict[str, str | int | dict[str, int]]]] = {
             "instanceids": [instance_id],
             "transitions": [
@@ -1439,7 +1439,7 @@ class FleetManager:
         Returns:
             resp (dict): Response data in json format.
         """
-        endpoint = "dock/base/repair"
+        endpoint = config.links["repair"]
         payload = {"fleet": int(fleet_id)}
         return self._make_request(
             endpoint=endpoint,
@@ -1461,7 +1461,7 @@ class FleetManager:
         Returns:
             resp (dict): Response data in json format.
         """
-        endpoint = "dock/base/repair/default"
+        endpoint = config.links["repair_spd"]
         payload: Mapping[str, str | int] = {
             "fleet": fleet_id,
             "seconds": 300,
@@ -1485,7 +1485,7 @@ class FleetManager:
         Returns:
             resp (dict): Response data in json format.
         """
-        endpoint = f"users/{self.userid}/dock/base/fleets"
+        endpoint = f"users/{self.userid}" + f"/{config.links["dock"]}"
         return self._make_request(
             endpoint=endpoint,
             params={},
@@ -1511,7 +1511,7 @@ class FleetManager:
             print("Fleet is locked / out in worldmap")
             return "Fleet is locked / out in worldmap"
 
-        endpoint = f"dock/base/fleets/{fleet_id}"
+        endpoint = f"{config.links["dock"]}" + f"/{fleet_id}"
         payload = self._pre_launch_payload(fleet_id)
         if not payload:
             print("Couldn't fetch fleet information")
@@ -1582,7 +1582,7 @@ class FleetManager:
             print(log_str)
 
         self._update_position(fleet_id=fleet_id, x=x, y=y)
-        endpoint = "updateMapObjects2.php"
+        endpoint = config.links["world_map_move"]
         params: dict[str, str | int] = {
             "actions": action_string,
             "id": self.map_ids[fleet_id],

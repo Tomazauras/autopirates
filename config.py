@@ -8,7 +8,7 @@ user = {
     "baseid": 0,
     "base_x": 0,
     "base_y": 0,
-    "world_index": 0,
+    "world_index": -2,
 }
 
 cookies = {
@@ -28,6 +28,15 @@ links = {
     "currency": "player/getCurrencyBalance",
     "base_url": "https://prod-kx-vip.bp.kixeye.com",
     "world_map_url": "https://prod-web-vip.bp.kixeye.com",
+    "base_load": "api/bm/base/load",
+    "npctargets": "api/bm/bookmarks/npctargets",
+    "vengeanceoutsector": "api/bm/bookmarks/vengeanceoutsector",
+    "vengeanceinsector": "api/bm/bookmarks/vengeanceinsector",
+    "dock": "dock/base/fleets",
+    "fuse": "base/transitions",
+    "repair": "dock/base/repair",
+    "repair_spd": "dock/base/repair/default",
+    "world_map_move": "updateMapObjects2.php",
 }
 
 crews = {
@@ -78,7 +87,7 @@ whitelist_crews = {
 }
 
 blacklist_crews = {
-    12507,
+    # 12507,
     12501,
     # 12010,
     11001,
@@ -104,8 +113,8 @@ blacklist_crews = {
     13004,
     12001,
     12013,
-    12502,
-    12503,
+    # 12502,
+    # 12503,
     12505,
     12506,
 }

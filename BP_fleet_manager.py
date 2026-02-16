@@ -670,6 +670,10 @@ class FleetManager:
                 string += str(new_params["minHealth"])
             if new_params.get("types", False):
                 string += str(new_params["types"])
+        elif action == 6:
+            if new_params.get("isDiscountOffer", False):
+                string += str(new_params["isDiscountOffer"])
+            string += str(new_params["objectId"])
         return string
 
     def _make_request(
@@ -706,6 +710,7 @@ class FleetManager:
                         3 - add/remove ship
                         4 - repair fleet
                         5 - instant rep
+                        6 - repair info / accept repair
             base (str): Is request for Base (kx) or Worldmap.
 
         Returns:
@@ -736,7 +741,7 @@ class FleetManager:
                 }
             )
 
-        if action == 2:
+        if action == 2 or action == 6:
             param_string = self._generate_hash_string(params=payload, action=action)
         else:
             param_string = self._generate_hash_string(params=new_params, action=action)
@@ -747,7 +752,7 @@ class FleetManager:
         )
 
         new_payload = dict(payload)
-        if action == 2:
+        if action == 2 or action == 6:
             new_payload.update(
                 {
                     "hn": hn,
@@ -770,7 +775,7 @@ class FleetManager:
                     resp = self.session_manager.session.post(
                         url, params=new_params, json=new_payload
                     )
-                elif action == 2:
+                elif action == 2 or action == 6:
                     resp = self.session_manager.session.post(
                         url, params=new_params, data=new_payload
                     )
@@ -1479,6 +1484,50 @@ class FleetManager:
             action=5,
         )
 
+    def repair_info(self, fleet_id: str):
+        """
+        Fetch repair info for a fleet.
+
+        Args:
+            fleet_id (str): Fleet id. ("1"...."15").
+
+        Returns:
+            resp (dict): Response data in json format.
+        """
+        endpoint = config.links["repair_info"]
+        payload = {"objectId": self.map_ids[fleet_id]}
+        return self._make_request(
+            endpoint=endpoint,
+            params={},
+            payload=payload,
+            post=True,
+            put=False,
+            secure=True,
+            action=6,
+        )
+
+    def repair_on_map(self, fleet_id: str):
+        """
+        Send a repair request to repair a fleet that is out in worldmap.
+
+        Args:
+            fleet_id (str): Fleet id. ("1"...."15").
+
+        Returns:
+            resp (dict): Response data in json format.
+        """
+        endpoint = config.links["repair_accept"]
+        payload = {"isDiscountOffer": False, "objectId": self.map_ids[fleet_id]}
+        return self._make_request(
+            endpoint=endpoint,
+            params={},
+            payload=payload,
+            post=True,
+            put=False,
+            secure=True,
+            action=6,
+        )
+
     def get_fleets(self):
         """
         Returns all docked/active fleets for this user.
@@ -1646,6 +1695,48 @@ class FleetManager:
             time.sleep(0.5)
             self._manage_fleet(fleet_id=fleet_id, fleet_layout=fleet_layout)
 
+    def test_entrace(
+        self, fleet_id: str, map_speed: float, level: str, types: str, clock: int
+    ):
+        """
+        Send out a fleet to a target, at a set clock, relative to the target center.
+
+        Args:
+            fleet_id (str): Id of the fleet.
+            map_speed (float): Map speed of the fleet.
+            level (str): Target level.
+            types (str): Target type.
+            clock (int): Entrance relative to the target.
+        """
+        self.launch(fleet_id=fleet_id)
+        fecthed_targets = (
+            self._fetch_locator_targets(  # pyright: ignore[reportPrivateUsage]
+                level=level, types=types, minHealth="100"
+            )
+        )
+        targets = self._filter_by_distance(  # pyright: ignore[reportPrivateUsage]
+            fecthed_targets=fecthed_targets["bookmarks"],
+            fleet_id=fleet_id,
+            level=level,
+            max_distance=50000,
+        )
+        if not targets:
+            return print(f"No targets close by found")
+        target = fm._pick_target(targets=targets)  # pyright: ignore[reportPrivateUsage]
+        if not target:
+            return print(f"Target {types} {level} not found")
+        fm.move(
+            fleet_id=fleet_id,
+            x=target[0] * 100,
+            y=target[1] * 100,
+            map_speed=map_speed,
+            return_dock=False,
+            attack=False,
+            clock=clock,
+            engage_radius=100,
+            in_combat_check=False,
+        )
+
     def hunt_targets(
         self,
         fleet_id: str,
@@ -1693,7 +1784,7 @@ class FleetManager:
                 fecthed_targets=fecthed_targets["bookmarks"],
                 fleet_id=fleet_id,
                 level=level,
-                max_distance=50000,
+                max_distance=60000,
             )
 
             if not targets:
@@ -1775,37 +1866,43 @@ class FleetManager:
             finally:
                 self._release_target(target_id=target[3])
                 print(
-                    f"[Fleet-{fleet_id}] {(timeout - time.time()) / 60 :.2f} min left"
+                    f"[Fleet-{fleet_id}] {(timeout - time.time()) / 60 :.1f} min left"
                 )
 
             if base_repair:
-                delay = self._distance(
-                    fleet_id=fleet_id, target_x=self.base_x, target_y=self.base_y
-                )
-                self.move(
-                    fleet_id=fleet_id,
-                    x=self.base_x,
-                    y=self.base_y,
-                    map_speed=map_speed,
-                    return_dock=True,
-                )
-                time.sleep(
-                    self._travel_time(
-                        distance=delay,
-                        map_speed=map_speed,
+                rep_inf = self.repair_info(fleet_id=fleet_id)
+                # repair on worldmap if below 5min
+                if rep_inf["result"]["dock_repair_duration"] < 300:
+                    self.repair_on_map(fleet_id=fleet_id)
+                    time.sleep(10)
+                else:
+                    delay = self._distance(
+                        fleet_id=fleet_id, target_x=self.base_x, target_y=self.base_y
                     )
-                )
-                time.sleep(3)
-
-                with self.repair_lock:
-                    self.lazy_repair(
+                    self.move(
                         fleet_id=fleet_id,
-                        gs_fleet_id=gs_fleet_id,
+                        x=self.base_x,
+                        y=self.base_y,
+                        map_speed=map_speed,
+                        return_dock=True,
                     )
+                    time.sleep(
+                        self._travel_time(
+                            distance=delay,
+                            map_speed=map_speed,
+                        )
+                    )
+                    time.sleep(3)
 
-                time.sleep(1)
-                self.launch(fleet_id=fleet_id)
-                time.sleep(2)
+                    with self.repair_lock:
+                        self.lazy_repair(
+                            fleet_id=fleet_id,
+                            gs_fleet_id=gs_fleet_id,
+                        )
+
+                    time.sleep(1)
+                    self.launch(fleet_id=fleet_id)
+                    time.sleep(2)
 
         time.sleep(1)
         self.move(
@@ -1816,45 +1913,6 @@ class FleetManager:
             return_dock=True,
         )
         time.sleep(3)
-
-
-def test_entrace(fleet_id: str, map_speed: float, level: str, types: str, clock: int):
-    """
-    Send out a fleet to a target, at a set clock, relative to the target center.
-
-    Args:
-        fleet_id (str): Id of the fleet.
-        map_speed (float): Map speed of the fleet.
-        level (str): Target level.
-        types (str): Target type.
-        clock (int): Entrance relative to the target.
-    """
-    fm.launch(fleet_id=fleet_id)
-    fecthed_targets = fm._fetch_locator_targets(  # pyright: ignore[reportPrivateUsage]
-        level=level, types=types, minHealth="100"
-    )
-    targets = fm._filter_by_distance(  # pyright: ignore[reportPrivateUsage]
-        fecthed_targets=fecthed_targets["bookmarks"],
-        fleet_id=fleet_id,
-        level=level,
-        max_distance=50000,
-    )
-    if not targets:
-        return print(f"No targets close by found")
-    target = fm._pick_target(targets=targets)  # pyright: ignore[reportPrivateUsage]
-    if not target:
-        return print(f"Target {types} {level} not found")
-    fm.move(
-        fleet_id=fleet_id,
-        x=target[0] * 100,
-        y=target[1] * 100,
-        map_speed=map_speed,
-        return_dock=False,
-        attack=False,
-        clock=clock,
-        engage_radius=100,
-        in_combat_check=False,
-    )
 
 
 def crew_scenario():
@@ -1898,48 +1956,6 @@ def crew_scenario():
     while time.time() < tout:
         cm.print_status()
         time.sleep(60)
-
-
-def camp_scenario(campaign_levels: list[str]):
-    """
-    Experimental.
-    Function accepts level templates for a campaign to be completed by fleet 1, the campaign must be started and a battle has to be engaged by the user.
-    After those steps, the script can be continued and level is done following the template provided.
-
-    Args:
-        campaign_levels (list): Target template paths.
-
-    Example:
-        Given campaign_levels = ["targets/some_target.txt", "targets/some_target2.txt"], function cycles over the templates, waiting for user input to either skip a template or use it.
-    """
-    while True:
-        camp_lvls = campaign_levels[:]
-        fm.launch(fleet_id="1")
-        time.sleep(3)
-        fm.move(
-            fleet_id="1",
-            x=fm.base_x,
-            y=fm.base_y,
-            map_speed=406,
-            return_dock=False,
-            attack=False,
-            clock=10,
-            engage_radius=300,
-            in_combat_check=False,
-        )
-        while True:
-            for level in camp_lvls:
-                _ = input(f"Press Enter to do [level-{level}]...")
-                if _.strip() == "0":
-                    print(f"Skiping Lvl-{level}")
-                    continue
-                fm._start_campaign_encounter(  # pyright: ignore[reportPrivateUsage]
-                    level=level,
-                    fleet_id="1",
-                    gs_fleet_id="1",
-                    map_speed=406,
-                    base_repair=False,
-                )
 
 
 if __name__ == "__main__":

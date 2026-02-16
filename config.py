@@ -36,6 +36,8 @@ links = {
     "fuse": "base/transitions",
     "repair": "dock/base/repair",
     "repair_spd": "dock/base/repair/default",
+    "repair_info": "repair/repairInfo",
+    "repair_accept": "repair/acceptrepair",
     "world_map_move": "updateMapObjects2.php",
 }
 
@@ -84,6 +86,7 @@ whitelist_crews = {
     11011,
     13003,
     # 12507,
+    12503,
 }
 
 blacklist_crews = {

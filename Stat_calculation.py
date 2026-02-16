@@ -1,7 +1,8 @@
 import math
+from typing import Sequence
 
 
-def evade(buffs: list, alliance_bonus: bool = False, lab_bonus: bool = False):
+def evade(buffs: list[float], alliance_bonus: bool = False, lab_bonus: bool = False):
     """
     Total Evade = 1 - [(1 - Evade Buff A) x (1 - Evade Buff B) x etc]
 
@@ -26,7 +27,7 @@ def evade(buffs: list, alliance_bonus: bool = False, lab_bonus: bool = False):
     return 1 - result
 
 
-def damage_buff(buffs: list, conquest_yard_bonus: bool = False):
+def damage_buff(buffs: list[float], conquest_yard_bonus: bool = False):
     """
     Total Damage Buff = (1 + Damage Buff A) x (1 + Damage Buff B) x etc - 1
     (this is the value you will see in the Attack tooltip of a ship or defense platform)
@@ -48,7 +49,9 @@ def damage_buff(buffs: list, conquest_yard_bonus: bool = False):
     return result - 1
 
 
-def projectile_damage(base_damage: int, salvo: int, multishot: int, damage_buffs: list):
+def projectile_damage(
+    base_damage: int, salvo: int, multishot: int, damage_buffs: list[float]
+):
     """
     Projectile Damage = (Base Damage / Salvo / Base Multishot) x (1 + Damage Buff A) x (1 + Damage Buff B) x etc
 
@@ -65,7 +68,7 @@ def projectile_damage(base_damage: int, salvo: int, multishot: int, damage_buffs
     return (base_damage / salvo / multishot) * (damage_buff(damage_buffs) + 1)
 
 
-def weapon_range(base_range: int, buffs: list):
+def weapon_range(base_range: int, buffs: list[float]):
     """
     Total Weapon Range = Base Weapon Range x (1 + Damage Type Range Buff + Weapon Type Range Buff + Self Range Modifier)
 
@@ -82,7 +85,7 @@ def weapon_range(base_range: int, buffs: list):
 
 def cycle_time(
     base_reload: float,
-    buffs: list,
+    buffs: list[float],
     rank_bonus: float = 0.75,
     salvo: int = 1,
     salvo_reload: float = 1,
@@ -112,7 +115,7 @@ def cycle_time(
     return calculated_reload
 
 
-def defense(buffs: list):
+def defense(buffs: list[float]):
     """
     Total Defense = 1 - [(1 - Defense Buff A) x (1 - Defense Buff B) x etc]
 
@@ -131,7 +134,7 @@ def defense(buffs: list):
     return 1 - result
 
 
-def defense_survival(buffs: list):
+def defense_survival(buffs: list[float]):
     """
     Defense = 1 - [1 / (1 + Survival%A + Survival%B)]
 
@@ -153,7 +156,7 @@ def defense_survival(buffs: list):
     return 1 - 1 / result
 
 
-def damage_taken(projectile_damage: float, defense_buffs: list, survival: float):
+def damage_taken(projectile_damage: float, defense_buffs: list[float], survival: float):
     """
     Damage Taken = (Projectile Damage - Deflection - Charged Armor) x (1 - Defense) / (1 + Survival % A + Survival % B)
     (Turret Defense and Splash Reduction are treated as survival)
@@ -173,12 +176,13 @@ def damage_taken(projectile_damage: float, defense_buffs: list, survival: float)
     return 1 - result
 
 
-def repair_stats(damage_times: list):
+def repair_stats(damage_times: Sequence[float | int], raw_seconds: bool = False):
     """
     Calculates how much damage has been taken for each battle
 
     Args:
         damage_times (List): List containing cummulative damage taken after each battle in this format (m.s). Example 7min 20s -> 7.20, 61min 59s -> 61.59
+        raw_seconds (bool): Consider List format in seconds 7min 20s -> 420.
 
     Returns:
         rep_times (List): Calculated damage taken in seconds for each battle.
@@ -186,18 +190,24 @@ def repair_stats(damage_times: list):
     Example:
         An array [5.10, 10.15, 15.00], would return [310, 305, 285]
     """
-    _ = damage_times[:]
+
+    _ = list(damage_times)
     _.insert(0, 0)
-    result = []
+    result: list[int] = []
     for i in range(len(_) - 1):
-        sum_seconds_prev = math.ceil(math.floor(_[i]) * 60 + _[i] % 1 * 100)
-        sum_seconds = math.ceil(math.floor(_[i + 1]) * 60 + _[i + 1] % 1 * 100)
-        result.append(sum_seconds - sum_seconds_prev)
+        if raw_seconds:
+            result.append(int(_[i + 1] - _[i]))
+        else:
+            sum_seconds_prev = math.ceil(math.floor(_[i]) * 60 + _[i] % 1 * 100)
+            sum_seconds = math.ceil(math.floor(_[i + 1]) * 60 + _[i + 1] % 1 * 100)
+            result.append(sum_seconds - sum_seconds_prev)
 
     return result
 
 
-def repair_comparisson(title: str, params: list, *data: list):
+def repair_comparisson(
+    title: str, params: list[str], raw_seconds: bool, *data: Sequence[float | int]
+):
     """
     Prints a table to compare average, min, max repair times for different parameters.
 
@@ -205,29 +215,32 @@ def repair_comparisson(title: str, params: list, *data: list):
         title (str): Title of the table.
         params (List): List of parameters to be used in the table comparison. (row headers)
         data (List): Lists of repair data (rows) to use for the comparisson
+        raw_seconds (bool): Rep time sequences are in seconds format.
     """
     print()
     print("=" * 60)
     print(f"     {title}     ")
     print("=" * 60)
-    data = []
+    table_data: list[list[str]] = []
     for l in data:
         if not l:
-            data.append(["–", "–", "–", "–"])
+            table_data.append(["–", "–", "–", "–"])
             continue
 
-        _ = repair_stats(l)
+        _ = repair_stats(l, raw_seconds)
         _avg = f"{math.floor(sum(_)/len(_)/60)}m {math.floor(sum(_)/len(_)%60)}s"
         _min = f"{math.floor(min(_)/60)}m {min(_)%60}s"
         _max = f"{math.floor(max(_)/60)}m {max(_)%60}s"
-        data.append([_avg, _min, _max, len(_)])
+        table_data.append([_avg, _min, _max, str(len(_))])
 
     headers = ["Average", "Min", "Max", "Targets"]
     parameters = params[:]
     row_format = "{:>12}" * (len(headers) + 1)
     print(row_format.format("", *headers))
-    for param, row in zip(parameters, data):
+    for param, row in zip(parameters, table_data):
         print(row_format.format(param, *row))
+
+    print()
 
 
 if __name__ == "__main__":

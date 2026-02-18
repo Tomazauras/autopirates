@@ -206,7 +206,11 @@ def repair_stats(damage_times: Sequence[float | int], raw_seconds: bool = False)
 
 
 def repair_comparisson(
-    title: str, params: list[str], raw_seconds: bool, *data: Sequence[float | int]
+    title: str,
+    params: list[str],
+    raw_seconds: bool,
+    cumulattive: bool,
+    *data: Sequence[float | int],
 ):
     """
     Prints a table to compare average, min, max repair times for different parameters.
@@ -227,7 +231,10 @@ def repair_comparisson(
             table_data.append(["–", "–", "–", "–"])
             continue
 
-        _ = repair_stats(l, raw_seconds)
+        if cumulattive:
+            _ = repair_stats(l, raw_seconds)
+        else:
+            _ = l
         _avg = f"{math.floor(sum(_)/len(_)/60)}m {math.floor(sum(_)/len(_)%60)}s"
         _min = f"{math.floor(min(_)/60)}m {min(_)%60}s"
         _max = f"{math.floor(max(_)/60)}m {max(_)%60}s"

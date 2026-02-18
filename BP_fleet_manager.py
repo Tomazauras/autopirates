@@ -674,6 +674,10 @@ class FleetManager:
             if new_params.get("isDiscountOffer", False):
                 string += str(new_params["isDiscountOffer"])
             string += str(new_params["objectId"])
+        elif action == 7:
+            string += str(new_params["completeTime"])
+            string += str(new_params["itemCode"])
+            string += str(new_params["startTime"])
         return string
 
     def _make_request(
@@ -711,6 +715,7 @@ class FleetManager:
                         4 - repair fleet
                         5 - instant rep
                         6 - repair info / accept repair
+                        7 - build rocket
             base (str): Is request for Base (kx) or Worldmap.
 
         Returns:
@@ -741,7 +746,7 @@ class FleetManager:
                 }
             )
 
-        if action == 2 or action == 6:
+        if action == 2 or action == 6 or action == 7:
             param_string = self._generate_hash_string(params=payload, action=action)
         else:
             param_string = self._generate_hash_string(params=new_params, action=action)
@@ -752,7 +757,7 @@ class FleetManager:
         )
 
         new_payload = dict(payload)
-        if action == 2 or action == 6:
+        if action == 2 or action == 6 or action == 7:
             new_payload.update(
                 {
                     "hn": hn,
@@ -775,7 +780,7 @@ class FleetManager:
                     resp = self.session_manager.session.post(
                         url, params=new_params, json=new_payload
                     )
-                elif action == 2 or action == 6:
+                elif action == 2 or action == 6 or action == 7:
                     resp = self.session_manager.session.post(
                         url, params=new_params, data=new_payload
                     )
@@ -1223,6 +1228,44 @@ class FleetManager:
             put=False,
             secure=True,
             action=5,
+        )
+
+    def build_rocket(self, rocket: str):
+        """
+        Start building a rocket.
+        Available rockets: quick pinch [1-4], long pinch [1-4]
+
+        Args:
+            rocket (str): Name of rocket in this format: rocket_name_level.
+
+        Example:
+            Example rocket = q_pinch_1 to start building quick pinch 1 or l_pinch_4 for long pinch 4 etc.
+
+        Returns:
+            resp (dict): Response data in json format.
+        """
+
+        endpoint = config.links["rocket_build"]
+        ts = int(time.time())
+        _: dict[str, int] = config.rockets[rocket]
+        if not _:
+            return print(
+                f"failed to fetch rocket info from config, for rocket-[{rocket}]"
+            )
+        payload = {
+            "completeTime": ts + _.get("build_time", 0),
+            "itemCode": _.get("item_code", 0),
+            "startTime": ts,
+        }
+
+        return self._make_request(
+            endpoint=endpoint,
+            params={},
+            payload=payload,
+            post=True,
+            put=False,
+            secure=True,
+            action=7,
         )
 
     def _start_campaign_encounter(

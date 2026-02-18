@@ -39,6 +39,7 @@ links = {
     "repair_info": "repair/repairInfo",
     "repair_accept": "repair/acceptrepair",
     "world_map_move": "updateMapObjects2.php",
+    "rocket_build": "rockets/build",
 }
 
 crews = {
@@ -167,4 +168,15 @@ crew_bonuses = {
     12506: "+8 crit, +30 defense",
     12007: "+8 crit, +30 defense",
     13238: "+15 evade, +30 dmg, +15 def",
+}
+
+rockets = {
+    "q_pinch_1": {"item_code": 661, "build_time": 900},
+    "q_pinch_2": {"item_code": 641, "build_time": 1800},
+    "q_pinch_3": {"item_code": 663, "build_time": 7200},
+    "q_pinch_4": {"item_code": 664, "build_time": 7200},
+    "l_pinch_1": {"item_code": 642, "build_time": 900},
+    "l_pinch_2": {"item_code": 643, "build_time": 7200},
+    "l_pinch_3": {"item_code": 671, "build_time": 7200},
+    "l_pinch_4": {"item_code": 672, "build_time": 7200},
 }

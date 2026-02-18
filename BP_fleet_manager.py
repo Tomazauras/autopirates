@@ -622,6 +622,9 @@ class FleetManager:
             m = math.hypot(cx, cy) or 1.0
             self.clock_unit[h] = (cx / m, cy / m)
 
+        self.rocket_storage: list[FleetManager.Rocket] = []
+        self._set_rockets()
+
     class Ship(TypedDict):
         id: int | None
         dock: NotRequired[str]
@@ -629,6 +632,16 @@ class FleetManager:
     class FleetPayload(TypedDict):
         ships: dict[str, FleetManager.Ship]
         launch: NotRequired[str]
+
+    class Rocket(TypedDict):
+        completeTime: int
+        completed: bool
+        itemCode: int
+        ready: int
+        rocketId: int
+        startTime: int
+        usedTime: int | None
+        userid: int
 
     def _generate_hash_string(
         self,
@@ -678,6 +691,10 @@ class FleetManager:
             string += str(new_params["completeTime"])
             string += str(new_params["itemCode"])
             string += str(new_params["startTime"])
+        elif action == 8:
+            string += str(new_params["expectedGold"])
+            string += str(new_params["rocketId"])
+            string += str(new_params["seconds"])
         return string
 
     def _make_request(
@@ -716,6 +733,7 @@ class FleetManager:
                         5 - instant rep
                         6 - repair info / accept repair
                         7 - build rocket
+                        8 - instant rocket
             base (str): Is request for Base (kx) or Worldmap.
 
         Returns:
@@ -746,7 +764,7 @@ class FleetManager:
                 }
             )
 
-        if action == 2 or action == 6 or action == 7:
+        if action == 2 or action == 6 or action == 7 or action == 8:
             param_string = self._generate_hash_string(params=payload, action=action)
         else:
             param_string = self._generate_hash_string(params=new_params, action=action)
@@ -757,7 +775,7 @@ class FleetManager:
         )
 
         new_payload = dict(payload)
-        if action == 2 or action == 6 or action == 7:
+        if action == 2 or action == 6 or action == 7 or action == 8:
             new_payload.update(
                 {
                     "hn": hn,
@@ -780,7 +798,7 @@ class FleetManager:
                     resp = self.session_manager.session.post(
                         url, params=new_params, json=new_payload
                     )
-                elif action == 2 or action == 6 or action == 7:
+                elif action == 2 or action == 6 or action == 7 or action == 8:
                     resp = self.session_manager.session.post(
                         url, params=new_params, data=new_payload
                     )
@@ -1230,6 +1248,26 @@ class FleetManager:
             action=5,
         )
 
+    def _set_rockets(self):
+        """
+        Fetch rocket storage
+
+        Returns:
+            resp (dict): Response data in json format.
+        """
+        endpoint = config.links["rocket_read"]
+        resp = self._make_request(
+            endpoint=endpoint,
+            params={},
+            payload={},
+            post=True,
+            put=False,
+            secure=True,
+            action=9,
+        )
+        self.rocket_storage = resp["data"]
+        return resp
+
     def build_rocket(self, rocket: str):
         """
         Start building a rocket.
@@ -1266,6 +1304,41 @@ class FleetManager:
             put=False,
             secure=True,
             action=7,
+        )
+
+    def rocket_speed_up(self):
+        """
+        Send a rocket speed up request for the curently building rocket. Used when an ongoing build is less than 5 minutes from completion.
+
+        Returns:
+            resp (dict): Response data in json format.
+        """
+        endpoint = config.links["rocket_spd"]
+        rocket = {}
+        for r in self.rocket_storage:
+            if not r["completed"]:
+                rocket = r
+        if not rocket:
+            print("No rocket is currently being built.")
+            return False
+        if rocket["completeTime"] - int(time.time()) > 300:
+            print(
+                f"Wait [{rocket["completeTime"] - int(time.time())-300}]s before trying speedup"
+            )
+            return False
+        payload = {
+            "expectedGold": 0,
+            "rocketId": rocket["rocketId"],
+            "seconds": rocket["completeTime"] - int(time.time()),
+        }
+        return self._make_request(
+            endpoint=endpoint,
+            params={},
+            payload=payload,
+            post=True,
+            put=False,
+            secure=True,
+            action=8,
         )
 
     def _start_campaign_encounter(

@@ -39,7 +39,9 @@ links = {
     "repair_info": "repair/repairInfo",
     "repair_accept": "repair/acceptrepair",
     "world_map_move": "updateMapObjects2.php",
+    "rocket_read": "rockets/getCurrent",
     "rocket_build": "rockets/build",
+    "rocket_spd": "rockets/speedup",
 }
 
 crews = {

@@ -9,7 +9,6 @@ import threading
 from collections.abc import Mapping
 import config
 from SessionManager import SessionManager
-from CrewManager import CrewManager
 
 BASE_URL = config.links["base_url"]
 WORLD_MAP_URL = config.links["world_map_url"]
@@ -69,9 +68,6 @@ class FleetManager:
             m = math.hypot(cx, cy) or 1.0
             self.clock_unit[h] = (cx / m, cy / m)
 
-        self.rocket_storage: list[FleetManager.Rocket] = []
-        self._set_rockets()
-
     class Ship(TypedDict):
         id: int | None
         dock: NotRequired[str]
@@ -79,16 +75,6 @@ class FleetManager:
     class FleetPayload(TypedDict):
         ships: dict[str, FleetManager.Ship]
         launch: NotRequired[str]
-
-    class Rocket(TypedDict):
-        completeTime: int
-        completed: bool
-        itemCode: int
-        ready: int
-        rocketId: int
-        startTime: int
-        usedTime: int | None
-        userid: int
 
     def _generate_hash_string(
         self,
@@ -134,14 +120,6 @@ class FleetManager:
             if new_params.get("isDiscountOffer", False):
                 string += str(new_params["isDiscountOffer"])
             string += str(new_params["objectId"])
-        elif action == 7:
-            string += str(new_params["completeTime"])
-            string += str(new_params["itemCode"])
-            string += str(new_params["startTime"])
-        elif action == 8:
-            string += str(new_params["expectedGold"])
-            string += str(new_params["rocketId"])
-            string += str(new_params["seconds"])
         return string
 
     def _make_request(
@@ -179,8 +157,6 @@ class FleetManager:
                         4 - repair fleet
                         5 - instant rep
                         6 - repair info / accept repair
-                        7 - build rocket
-                        8 - instant rocket
             base (str): Is request for Base (kx) or Worldmap.
 
         Returns:
@@ -211,7 +187,7 @@ class FleetManager:
                 }
             )
 
-        if action == 2 or action == 6 or action == 7 or action == 8:
+        if action == 2 or action == 6:
             param_string = self._generate_hash_string(params=payload, action=action)
         else:
             param_string = self._generate_hash_string(params=new_params, action=action)
@@ -222,7 +198,7 @@ class FleetManager:
         )
 
         new_payload = dict(payload)
-        if action == 2 or action == 6 or action == 7 or action == 8:
+        if action == 2 or action == 6:
             new_payload.update(
                 {
                     "hn": hn,
@@ -245,7 +221,7 @@ class FleetManager:
                     resp = self.session_manager.session.post(
                         url, params=new_params, json=new_payload
                     )
-                elif action == 2 or action == 6 or action == 7 or action == 8:
+                elif action == 2 or action == 6:
                     resp = self.session_manager.session.post(
                         url, params=new_params, data=new_payload
                     )
@@ -576,7 +552,7 @@ class FleetManager:
             map_speed=map_speed,
             in_combat_check=True,
         )
-        if not resp.get("objects", False)[0]:
+        if not resp.get("objects", False):
             # If Target is intercepted by another player or the response is not ok
             return None, None, None
         combat_guid = resp.get("objects")[0].get("data").get("combat_guid", None)
@@ -646,146 +622,6 @@ class FleetManager:
             put=True,
             secure=True,
             action=3,
-        )
-
-    def _fuse(self, instance_id: str, source_id: int, amount: int):
-        """
-        Experimental.
-
-        1) Loading a fuse-able item in-game,
-        2) sending a fuse request through the script,
-        3) coming back to the game and fusing the item leads to a bug/crash.
-
-        Following the steps - double crafting can be achieved. This is logged as an error on the server side!
-        USE WITH CAUTION
-
-        To get instanceId inspect network requests while fusing an item in-game.
-
-        Args:
-            instance_id (str): id.
-            source_id (int): id of the item.
-            amount (int): amount to fuse.
-
-        Returns:
-            resp (dict): Response data in json format.
-        """
-        endpoint = config.links["fuse"]
-        payload: dict[str, list[str | dict[str, str | int | dict[str, int]]]] = {
-            "instanceids": [instance_id],
-            "transitions": [
-                {
-                    "instanceid": instance_id,
-                    "buildingType": 76,
-                    "transition": "fuse_up_to",
-                    "extraData": {
-                        "sourceID": source_id,
-                        "targetID": source_id + 1,
-                        "amount": amount,
-                    },
-                }
-            ],
-        }
-        return self._make_request(
-            endpoint=endpoint,
-            params={},
-            payload=payload,
-            post=True,
-            put=False,
-            secure=True,
-            action=5,
-        )
-
-    def _set_rockets(self):
-        """
-        Fetch rocket storage
-
-        Returns:
-            resp (dict): Response data in json format.
-        """
-        endpoint = config.links["rocket_read"]
-        resp = self._make_request(
-            endpoint=endpoint,
-            params={},
-            payload={},
-            post=True,
-            put=False,
-            secure=True,
-            action=9,
-        )
-        self.rocket_storage = resp["data"]
-        return resp
-
-    def build_rocket(self, rocket: str):
-        """
-        Start building a rocket.
-        Available rockets: quick pinch [1-4], long pinch [1-4]
-
-        Args:
-            rocket (str): Name of rocket in this format: rocket_name_level.
-
-        Example:
-            Example rocket = q_pinch_1 to start building quick pinch 1 or l_pinch_4 for long pinch 4 etc.
-
-        Returns:
-            resp (dict): Response data in json format.
-        """
-
-        endpoint = config.links["rocket_build"]
-        ts = int(time.time())
-        _: dict[str, int] = config.rockets[rocket]
-        if not _:
-            return print(
-                f"failed to fetch rocket info from config, for rocket-[{rocket}]"
-            )
-        payload = {
-            "completeTime": ts + _.get("build_time", 0),
-            "itemCode": _.get("item_code", 0),
-            "startTime": ts,
-        }
-
-        return self._make_request(
-            endpoint=endpoint,
-            params={},
-            payload=payload,
-            post=True,
-            put=False,
-            secure=True,
-            action=7,
-        )
-
-    def rocket_speed_up(self):
-        """
-        Send a rocket speed up request for the curently building rocket. Used when an ongoing build is less than 5 minutes from completion.
-
-        Returns:
-            resp (dict): Response data in json format.
-        """
-        endpoint = config.links["rocket_spd"]
-        rocket = None
-        for r in self.rocket_storage:
-            if not r["completed"]:
-                rocket = r
-        if rocket is None:
-            print("No rocket is currently being built.")
-            return False
-        if rocket["completeTime"] - int(time.time()) > 300:
-            print(
-                f"Wait [{rocket["completeTime"] - int(time.time())-300}]s before trying speedup"
-            )
-            return False
-        payload: Mapping[str, int] = {
-            "expectedGold": 0,
-            "rocketId": rocket["rocketId"],
-            "seconds": rocket["completeTime"] - int(time.time()),
-        }
-        return self._make_request(
-            endpoint=endpoint,
-            params={},
-            payload=payload,
-            post=True,
-            put=False,
-            secure=True,
-            action=8,
         )
 
     def _start_campaign_encounter(
@@ -958,14 +794,16 @@ class FleetManager:
         Returns:
             ws (websocket): Websocket object.
         """
-        ws = websocket.create_connection(  # pyright: ignore[reportUnknownMemberType]
-            "wss://" + server_url + ":3443",
-            header=[
-                "Origin: {BASE_URL}",
-                "Cache-Control: no-cache",
-                "Pragma: no-cache",
-                "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36 OPR/120.0.0.0",
-            ],
+        ws: websocket.WebSocket = (
+            websocket.create_connection(  # pyright: ignore[reportUnknownMemberType]
+                "wss://" + server_url + ":3443",
+                header=[
+                    "Origin: {BASE_URL}",
+                    "Cache-Control: no-cache",
+                    "Pragma: no-cache",
+                    "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36 OPR/120.0.0.0",
+                ],
+            )
         )
         # send CLN + playerId + engageId + combatGuid
         handshake = self._ws_handshake(
@@ -1275,12 +1113,10 @@ class FleetManager:
             clock (int): Entrance relative to the target.
         """
         self.launch(fleet_id=fleet_id)
-        fecthed_targets = (
-            self._fetch_locator_targets(  # pyright: ignore[reportPrivateUsage]
-                level=level, types=types, minHealth="100"
-            )
+        fecthed_targets = self._fetch_locator_targets(
+            level=level, types=types, minHealth="100"
         )
-        targets = self._filter_by_distance(  # pyright: ignore[reportPrivateUsage]
+        targets = self._filter_by_distance(
             fecthed_targets=fecthed_targets["bookmarks"],
             fleet_id=fleet_id,
             level=level,
@@ -1288,10 +1124,10 @@ class FleetManager:
         )
         if not targets:
             return print(f"No targets close by found")
-        target = fm._pick_target(targets=targets)  # pyright: ignore[reportPrivateUsage]
+        target = self._pick_target(targets=targets)
         if not target:
             return print(f"Target {types} {level} not found")
-        fm.move(
+        self.move(
             fleet_id=fleet_id,
             x=target[0] * 100,
             y=target[1] * 100,
@@ -1479,72 +1315,3 @@ class FleetManager:
             return_dock=True,
         )
         time.sleep(3)
-
-
-def crew_scenario():
-    """
-    Sends out fleets [1-5] to hunt uranium targets, each containing a single ship that can destroy the uranium target. Once all fleets are sent out, 20 Threads are inniated to roll for crews.
-    """
-    tout = time.time() + 60 * 10
-    threads: list[threading.Thread] = []
-    for i in range(1, 6):
-        t = threading.Thread(
-            target=fm.hunt_targets,
-            args=(str(i), str(i), "13", "343", "1", tout, 12, 443.5, False, False),
-        )
-        threads.append(t)
-        t.start()
-        time.sleep(15)
-
-    for i in range(6, 8):
-        t = threading.Thread(
-            target=fm.hunt_targets,
-            args=(
-                str(i),
-                str(i),
-                "13",
-                "343",
-                "1",
-                tout,
-                12,
-                406.25,
-                False,
-                False,
-            ),
-        )
-        threads.append(t)
-        t.start()
-        time.sleep(5)
-
-    cm.set_defaults(40)
-    for i in range(40):
-        threading.Thread(
-            target=cm.fill_crews,
-            args=(tout, i),
-        ).start()
-        time.sleep(1)
-
-    while time.time() < tout:
-        cm.print_status()
-        time.sleep(60)
-
-    for t in threads:
-        t.join()
-
-    for i in range(1, 8):
-        fm.lazy_repair(str(i), str(i))
-        fm.manage_fleet(str(i), "", "")
-
-
-if __name__ == "__main__":
-    try:
-        sm = SessionManager()
-        with sm.session:
-            cm = CrewManager(session_manager=sm)
-            fm = FleetManager(session_manager=sm)
-
-            # Scenario can be created by calling the respective manager functions..
-            fm.test_entrace("2", 443.5, "54", "728", 6)
-
-    except KeyboardInterrupt:
-        print("shutdown. keyboard interput")

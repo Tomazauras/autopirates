@@ -42,6 +42,8 @@ links = {
     "rocket_read": "rockets/getCurrent",
     "rocket_build": "rockets/build",
     "rocket_spd": "rockets/speedup",
+    "fm_redeem": "forsakenmission/redeem",
+    "event_schedule": "scheduler/events",
 }
 
 crews = {

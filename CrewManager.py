@@ -361,7 +361,7 @@ class CrewManager:
         Args:
             thread_count (int): The numbers of threads to use when rolling crews and setting limits.
         """
-        self.uranium_limit *= thread_count * 1.4
+        self.uranium_limit *= thread_count * 1.2
         self.remaining_slots -= thread_count
         for thread in range(0, thread_count):
             self.can_roll[thread] = (
@@ -398,18 +398,18 @@ class CrewManager:
                     self.remaining_slots -= 1
             self._set_uranium()
 
-    def flush_crews(self, blacklist: bool):
+    def flush_crews(self, blacklist: list[int]):
         """
-        Delete all crews from storage.
+        Delete crews from storage based on blacklist.
 
         Args:
-            blacklist (bool): Use a blacklist defined in config.py, containing crew ids / types to delete from storage.
+            blacklist (list): Use a blacklist defined in config.py or provide your own, containing crew ids / types to delete from storage.
         """
         if not self.crew_storage:
             self._set_crews()
         for crew in self.crew_storage:
             if blacklist:
-                if int(crew["crew_id"]) in self.blacklist:
+                if int(crew["crew_id"]) in blacklist:
                     self._delete_crew(int(crew["id"]))
                     print(f'deleted {self.crew_names[int(crew["crew_id"])]}')
             else:

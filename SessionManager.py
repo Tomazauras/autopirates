@@ -21,6 +21,8 @@ class SessionManager:
             print("Failed to initialize session with game server")
             exit()
 
+        self.resp_debug = 0
+
         self.game_signed_request = config.cookies["game_signed_request"]
         self.signed_request = config.cookies["signed_request"]
         self.seed = config.seeds["base"]

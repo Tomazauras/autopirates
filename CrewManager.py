@@ -1,3 +1,4 @@
+import json
 from typing import TypedDict
 import random
 import time
@@ -146,6 +147,12 @@ class CrewManager:
             )
         else:
             resp = self.session_manager.session.get(url, params=new_params)
+
+        if self.session_manager.resp_debug:
+            # print(resp.text)
+            print(new_params)
+            print(new_payload)
+            print(json.dumps(resp.json(), indent=1))
 
         resp.raise_for_status()
         return resp.json()
@@ -337,22 +344,24 @@ class CrewManager:
         resp = self._accept_crew(transaction_id=transaction_id)
         return resp["item"]["crew_id"], resp["item"]["id"]
 
-    def print_status(self):
+    def print_status(self, timeout: float):
         """
         Print information about the current crew roll session.
         """
-        _: defaultdict[int, int] = defaultdict(int)
-        for k in self.roll_history.keys():
-            _[0] += sum(self.roll_history[k].values())
-            for crew_id, count in self.roll_history[k].items():
-                if crew_id in self.whitelist:
-                    _[crew_id] += count
+        while time.time() < timeout:
+            _: defaultdict[int, int] = defaultdict(int)
+            for k in self.roll_history.keys():
+                _[0] += sum(self.roll_history[k].values())
+                for crew_id, count in self.roll_history[k].items():
+                    if crew_id in self.whitelist:
+                        _[crew_id] += count
 
-        print(f"====== Crew Status ======")
-        print(f"Rolls : {_[0]}")
-        for key, value in _.items():
-            if key in self.whitelist:
-                print(f"{self.crew_names[key]} : {value}")
+            print(f"====== Crew Status ======")
+            print(f"Rolls : {_[0]}")
+            for key, value in _.items():
+                if key in self.whitelist:
+                    print(f"{self.crew_names[key]} : {value}")
+            time.sleep(5)
 
     def set_defaults(self, thread_count: int):
         """

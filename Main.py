@@ -5,19 +5,6 @@ from CrewManager import CrewManager
 from FleetManager import FleetManager
 from BaseManager import BaseManager
 
-if __name__ == "__main__":
-    try:
-        sm = SessionManager()
-        with sm.session:
-            cm = CrewManager(session_manager=sm)
-            fm = FleetManager(session_manager=sm)
-            bm = BaseManager(session_manager=sm)
-
-            # Scenario can be created by calling the respective manager functions..
-
-    except KeyboardInterrupt:
-        print("shutdown. keyboard interput")
-
 
 def crew_scenario():
     """
@@ -54,17 +41,17 @@ def crew_scenario():
         t.start()
         time.sleep(5)
 
+    threading.Thread(
+        target=cm.print_status,
+        args=(tout,),
+    ).start()
     cm.set_defaults(40)
     for i in range(40):
         threading.Thread(
             target=cm.fill_crews,
             args=(tout, i),
         ).start()
-        time.sleep(1)
-
-    while time.time() < tout:
-        cm.print_status()
-        time.sleep(60)
+        time.sleep(0.2)
 
     for t in threads:
         t.join()
@@ -72,3 +59,17 @@ def crew_scenario():
     for i in range(1, 8):
         fm.lazy_repair(str(i), str(i))
         fm.manage_fleet(str(i), "", "")
+
+
+if __name__ == "__main__":
+    try:
+        sm = SessionManager()
+        with sm.session:
+            cm = CrewManager(session_manager=sm)
+            fm = FleetManager(session_manager=sm)
+            bm = BaseManager(session_manager=sm)
+
+            # Scenario can be created by calling the respective manager functions..
+
+    except KeyboardInterrupt:
+        print("shutdown. keyboard interput")

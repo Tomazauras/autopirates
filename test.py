@@ -4,7 +4,7 @@ import math
 Short script to transform data. Transform a file containing commands and timestamps, to a file containing commands and sleep durations.
 """
 
-level_template = []
+level_template: list[tuple[bytes, float]] = []
 with open("targets/test.txt", "r") as f:
     for line in f.readlines():
         cmd_hex, delay_str = line.split(maxsplit=2)
@@ -14,7 +14,7 @@ with open("targets/test.txt", "r") as f:
 
 
 prev = 0
-times = []
+times: list[float] = []
 
 for cmd, delay in level_template:
     newTime = prev - delay
@@ -33,4 +33,3 @@ with open("targets/times.txt", "w") as f:
         f.write(" ")
         f.write(str(times[i]))
         f.write("\n")
-        prev = delay

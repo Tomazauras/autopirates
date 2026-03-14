@@ -44,6 +44,7 @@ links = {
     "rocket_spd": "rockets/speedup",
     "fm_redeem": "forsakenmission/redeem",
     "event_schedule": "scheduler/events",
+    "build_ship": "dock/base/ships",
 }
 
 crews = {

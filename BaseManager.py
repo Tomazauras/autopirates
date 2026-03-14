@@ -1,4 +1,5 @@
-from typing import TypedDict
+import json
+from typing import Any, TypedDict
 import random
 import time
 from collections.abc import Mapping
@@ -76,12 +77,10 @@ class BaseManager:
     def _make_request(
         self,
         endpoint: str,
-        params: Mapping[str, str | int | float],
-        payload: Mapping[
-            str,
-            str | int | list[str | dict[str, str | int | dict[str, int]]],
-        ],
+        params: Mapping[str, Any],
+        payload: Mapping[str, Any],
         post: bool,
+        put: bool,
         secure: bool,
         action: int,
     ):
@@ -96,7 +95,7 @@ class BaseManager:
             put (bool): Is request a Put or a Get.
             secure (bool): Should request use secure hashing.
             action (int): Number associated with an action.
-                        0 - fuse item
+                        -1 - fuse item, build ship
                         1 - build rocket
                         2 - instant rocket
                         3 - setRockets
@@ -161,8 +160,23 @@ class BaseManager:
                     )
             else:
                 resp = self.session_manager.session.post(url, params=new_params)
+        elif put:
+            resp = self.session_manager.session.put(
+                url, params=new_params, json=new_payload
+            )
         else:
             resp = self.session_manager.session.get(url, params=new_params)
+
+        if self.session_manager.resp_debug:
+            # print(resp.text)
+            print(new_params)
+            print(new_payload)
+            print(
+                json.dumps(
+                    resp.json(),  # pyright: ignore[reportPossiblyUnboundVariable]
+                    indent=1,
+                )
+            )
 
         resp.raise_for_status()  # pyright: ignore[reportPossiblyUnboundVariable]
         return resp.json()  # pyright: ignore[reportPossiblyUnboundVariable]
@@ -209,8 +223,9 @@ class BaseManager:
             params={},
             payload=payload,
             post=True,
+            put=False,
             secure=True,
-            action=0,
+            action=-1,
         )
 
     def _fm_redeem(self, listing_id: str):
@@ -229,6 +244,7 @@ class BaseManager:
             params={},
             payload=payload,
             post=True,
+            put=False,
             secure=True,
             action=4,
         )
@@ -246,6 +262,7 @@ class BaseManager:
             params={},
             payload={},
             post=False,
+            put=False,
             secure=True,
             action=5,
         )
@@ -290,6 +307,7 @@ class BaseManager:
             params={},
             payload={},
             post=True,
+            put=False,
             secure=True,
             action=3,
         )
@@ -329,6 +347,7 @@ class BaseManager:
             params={},
             payload=payload,
             post=True,
+            put=False,
             secure=True,
             action=1,
         )
@@ -363,6 +382,47 @@ class BaseManager:
             params={},
             payload=payload,
             post=True,
+            put=False,
             secure=True,
             action=2,
+        )
+
+    def build_ship(
+        self,
+        refit: bool,
+        ship_id: str,
+        payload: Mapping[
+            str, bool | int | list[int] | Mapping[str, str | dict[str, int]]
+        ],
+    ):
+        """
+        Build or refit a ship in regular yard
+
+        Some notes...
+        In this context illegal - item that is meant to be used on a different ship, or should is not available to equip using regular methods.
+
+        If a cic slot is available for the ship, you can equip illegal cics
+        Same is true for officers
+        Duplicate officers can not be equipped on a hull, sometimes the same is true for cics. Depending if it's a cic meant for a regular ship or a dreadnought.
+
+        You can equip illegal class weapons on a weapon slot regarless of weapon base class.
+        Example, equiping multiform missile on a worldeater ship
+
+        Returns:
+            resp (dict): Response data in json format.
+        """
+        endpoint = config.links["build_ship"]
+        if refit:
+            endpoint += f"/{ship_id}"
+        else:
+            endpoint += f"/0"
+
+        return self._make_request(
+            endpoint=endpoint,
+            params={},
+            payload=payload,
+            post=False,
+            put=True,
+            secure=True,
+            action=-1,
         )

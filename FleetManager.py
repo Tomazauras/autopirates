@@ -1,3 +1,4 @@
+import json
 import struct
 from typing import NotRequired, TypedDict
 import websocket
@@ -234,6 +235,17 @@ class FleetManager:
         else:
             resp = self.session_manager.session.get(url, params=new_params)
 
+        if self.session_manager.resp_debug:
+            # print(resp.text)
+            print(new_params)
+            print(new_payload)
+            print(
+                json.dumps(
+                    resp.json(),  # pyright: ignore[reportPossiblyUnboundVariable]
+                    indent=1,
+                )
+            )
+
         resp.raise_for_status()  # pyright: ignore[reportPossiblyUnboundVariable]
         return resp.json()  # pyright: ignore[reportPossiblyUnboundVariable]
 
@@ -294,7 +306,7 @@ class FleetManager:
                 target_y=target["y"] * 100,
             )
 
-            if dist > max_distance:
+            if dist > max_distance and max_distance > 0:
                 continue
             if level:
                 # TODO check for ',' in level string, if found do itteration for each level separated by ','
@@ -363,11 +375,23 @@ class FleetManager:
         """
         endpoint = config.links["npctargets"]
         payload = {
-            "count": "100",
-            "levels": level,
-            "minHealth": minHealth,
+            "count": "200",
             "types": types,
         }
+
+        if level:
+            payload.update(
+                {
+                    "levels": level,
+                }
+            )
+        if minHealth:
+            payload.update(
+                {
+                    "minHealth": minHealth,
+                }
+            )
+
         return self._make_request(
             endpoint=endpoint,
             params={},
@@ -1113,6 +1137,7 @@ class FleetManager:
             clock (int): Entrance relative to the target.
         """
         self.launch(fleet_id=fleet_id)
+        time.sleep(2)
         fecthed_targets = self._fetch_locator_targets(
             level=level, types=types, minHealth="100"
         )
@@ -1186,7 +1211,7 @@ class FleetManager:
                 fecthed_targets=fecthed_targets["bookmarks"],
                 fleet_id=fleet_id,
                 level=level,
-                max_distance=60000,
+                max_distance=-1,
             )
 
             if not targets:
@@ -1197,7 +1222,9 @@ class FleetManager:
             target = self._pick_target(targets=targets)
 
             if not target:
-                print(f"[Fleet-{fleet_id}] Could not targets, that are not engaged")
+                print(
+                    f"[Fleet-{fleet_id}] Could not find targets, that are not engaged"
+                )
                 time.sleep(60)
                 continue
 
@@ -1274,6 +1301,9 @@ class FleetManager:
             if base_repair:
                 rep_inf = self.repair_info(fleet_id=fleet_id)
                 # repair on worldmap if below 5min
+                print(
+                    f"{int(rep_inf["result"]["dock_repair_duration"] / 60)}m{rep_inf["result"]["dock_repair_duration"] % 60}s"
+                )
                 if rep_inf["result"]["dock_repair_duration"] < 300:
                     self.repair_on_map(fleet_id=fleet_id)
                     time.sleep(10)
